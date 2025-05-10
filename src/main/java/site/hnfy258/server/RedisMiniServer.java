@@ -19,6 +19,9 @@ import site.hnfy258.server.handler.RespEncoder;
 import site.hnfy258.server.handler.StringHandler;
 @Slf4j
 public class RedisMiniServer implements RedisServer{
+    private static final int DEFAULT_DBCOUNT = 16;
+
+
     private String host;
     private int port;
 
@@ -28,13 +31,14 @@ public class RedisMiniServer implements RedisServer{
 
     private RedisCore redisCore;
 
+
     public RedisMiniServer(String host, int port) {
         this.host = host;
         this.port = port;
         this.bossGroup = new NioEventLoopGroup(1);
         this.workerGroup = new NioEventLoopGroup(4);
 
-        this.redisCore = new RedisCoreImpl();
+        this.redisCore = new RedisCoreImpl(DEFAULT_DBCOUNT);
     }
 
 
