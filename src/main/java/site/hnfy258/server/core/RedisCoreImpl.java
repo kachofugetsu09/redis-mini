@@ -1,6 +1,7 @@
 package site.hnfy258.server.core;
 
 import site.hnfy258.database.RedisDB;
+import site.hnfy258.datastructure.RedisBytes;
 import site.hnfy258.datastructure.RedisData;
 
 import java.util.Collections;
@@ -22,20 +23,20 @@ public class RedisCoreImpl implements RedisCore{
     }
 
     @Override
-    public Set<byte[]> keys() {
+    public Set<RedisBytes> keys() {
         int dbIndex = getCurrentDBIndex();
         RedisDB db = databases.get(dbIndex);
         return db.keys();
     }
 
     @Override
-    public void put(byte[] key, RedisData value) {
+    public void put(RedisBytes key, RedisData value) {
         RedisDB db = databases.get(getCurrentDBIndex());
         db.put(key, value);
     }
 
     @Override
-    public RedisData get(byte[] key) {
+    public RedisData get(RedisBytes key) {
         RedisDB db = databases.get(getCurrentDBIndex());
         if(db.exist(key)){
             return db.get(key);
