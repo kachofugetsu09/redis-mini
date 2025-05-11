@@ -2,6 +2,7 @@ package site.hnfy258.server.handler;
 
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
+import io.netty.channel.ChannelHandler.Sharable;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import site.hnfy258.command.Command;
@@ -15,6 +16,7 @@ import site.hnfy258.server.core.RedisCore;
 
 @Slf4j
 @Getter
+@Sharable
 public class RespCommandHandler extends SimpleChannelInboundHandler<Resp> {
 
     private final RedisCore redisCore;

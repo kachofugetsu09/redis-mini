@@ -16,9 +16,9 @@ public class RespArray extends Resp{
     public void encode(Resp resp, ByteBuf byteBuf) {
         byteBuf.writeByte('*');
         byteBuf.writeBytes(Integer.toString(content.length).getBytes());
+        byteBuf.writeBytes(CRLF);
         for(Resp r : content){
             r.encode(r, byteBuf);
         }
-        byteBuf.writeBytes(CRLF);
     }
 }

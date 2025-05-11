@@ -2,6 +2,15 @@ package site.hnfy258.command;
 
 import lombok.Getter;
 import site.hnfy258.command.impl.Ping;
+import site.hnfy258.command.impl.hash.Hdel;
+import site.hnfy258.command.impl.hash.Hget;
+import site.hnfy258.command.impl.hash.Hset;
+import site.hnfy258.command.impl.list.Lpop;
+import site.hnfy258.command.impl.list.Lpush;
+import site.hnfy258.command.impl.list.Lrange;
+import site.hnfy258.command.impl.set.Sadd;
+import site.hnfy258.command.impl.set.Spop;
+import site.hnfy258.command.impl.set.Srem;
 import site.hnfy258.command.impl.string.Get;
 import site.hnfy258.command.impl.string.Set;
 import site.hnfy258.server.core.RedisCore;
@@ -9,7 +18,18 @@ import site.hnfy258.server.core.RedisCore;
 import java.util.function.Function;
 @Getter
 public enum CommandType {
-    PING(core ->new Ping()), SET(Set::new), GET(Get::new);
+    PING(core ->new Ping()),
+    SET(Set::new),
+    GET(Get::new),
+    SADD(Sadd::new),
+    SPOP(Spop::new),
+    SREM(Srem::new),
+    LPUSH(Lpush::new),
+    LPOP(Lpop::new),
+    LRANGE(Lrange::new),
+    HSET(Hset::new),
+    HGET(Hget::new),
+    HDEL(Hdel::new);
 
     private final Function<RedisCore, Command> supplier;
 
