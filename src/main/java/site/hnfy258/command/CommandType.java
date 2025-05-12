@@ -13,6 +13,8 @@ import site.hnfy258.command.impl.set.Spop;
 import site.hnfy258.command.impl.set.Srem;
 import site.hnfy258.command.impl.string.Get;
 import site.hnfy258.command.impl.string.Set;
+import site.hnfy258.command.impl.zset.Zadd;
+import site.hnfy258.command.impl.zset.Zrange;
 import site.hnfy258.server.core.RedisCore;
 
 import java.util.function.Function;
@@ -29,7 +31,9 @@ public enum CommandType {
     LRANGE(Lrange::new),
     HSET(Hset::new),
     HGET(Hget::new),
-    HDEL(Hdel::new);
+    HDEL(Hdel::new),
+    ZADD(Zadd::new),
+    ZRANGE(Zrange::new);
 
     private final Function<RedisCore, Command> supplier;
 

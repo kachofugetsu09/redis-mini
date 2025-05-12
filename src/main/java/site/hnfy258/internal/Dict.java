@@ -23,6 +23,19 @@ public class Dict<K,V> {
         return find(key) != null;
     }
 
+    public boolean contains(K score, V member) {
+        if(score == null) return false;
+        if(rehashIndex != -1) rehashStep();
+        DictEntry<K, V> entry = find(score);
+        while (entry != null) {
+            if(entry.value.equals(member)){
+                return true;
+            }
+            entry = entry.next;
+        }
+        return false;
+    }
+
     static class DictEntry<K,V>{
         K key;
         V value;
