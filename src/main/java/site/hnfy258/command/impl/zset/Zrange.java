@@ -88,8 +88,8 @@ public class Zrange implements Command {
                     return new RespArray(new Resp[0]);
                 }
                 
-                // 反转列表，按分数从低到高
-                Collections.reverse(range);
+                // 不需要再反转列表，因为已经在SkipList中正确排序
+                // Collections.reverse(range);
             } catch (Exception e) {
                 return new Errors("ERR Failed to get range: " + e.getMessage());
             }

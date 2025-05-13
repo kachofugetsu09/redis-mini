@@ -221,9 +221,10 @@ public class SkipList <T extends Comparable<T>>{
             return list; // 如果已经到达尾部，返回空列表
         }
 
-        // 收集从start到end的所有节点
+        // 收集从start到end的所有节点到临时列表
+        List<SkipListNode<T>> tempList = new ArrayList<>();
         while (x != null && traversed <= endRank) {
-            list.add(x);
+            tempList.add(x);
             if (x.level != null && x.level.length > 0 && 
                 x.level[0] != null && x.level[0].forward != null) {
                 x = x.level[0].forward;
@@ -231,6 +232,11 @@ public class SkipList <T extends Comparable<T>>{
             } else {
                 break;
             }
+        }
+        
+        // 反转临时列表添加到最终结果列表，保证分数从低到高
+        for (int i = tempList.size() - 1; i >= 0; i--) {
+            list.add(tempList.get(i));
         }
 
         return list;
