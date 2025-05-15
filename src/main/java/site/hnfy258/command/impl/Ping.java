@@ -11,6 +11,7 @@ public class Ping implements Command {
         return CommandType.PING;
     }
 
+
     @Override
     public void setContext(Resp[] array) {
         //不需要内容
@@ -19,5 +20,10 @@ public class Ping implements Command {
     @Override
     public Resp handle() {
         return new SimpleString("PONG");
+    }
+
+    @Override
+    public boolean isWriteCommand() {
+        return false;
     }
 }

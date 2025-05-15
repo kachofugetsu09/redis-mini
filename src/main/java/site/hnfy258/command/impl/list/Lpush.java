@@ -52,4 +52,9 @@ public class Lpush implements Command {
         int size = redisList.size();
         return new BulkString(new RedisBytes(String.valueOf(size).getBytes()));
     }
+
+    @Override
+    public boolean isWriteCommand() {
+        return true;
+    }
 }

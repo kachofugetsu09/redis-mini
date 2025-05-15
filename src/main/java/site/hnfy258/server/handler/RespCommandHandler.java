@@ -62,7 +62,7 @@ public class RespCommandHandler extends SimpleChannelInboundHandler<Resp> {
             Resp result = command.handle();
 
 
-            if(aofManager !=null){
+            if(aofManager !=null && command.isWriteCommand()){
                 aofManager.append(respArray);
             }
 

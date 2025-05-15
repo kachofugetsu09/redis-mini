@@ -46,4 +46,9 @@ public class Sadd implements Command {
         redisCore.put(key, redisSet);
         return new RespInteger(add);
     }
+
+    @Override
+    public boolean isWriteCommand() {
+        return true;
+    }
 }

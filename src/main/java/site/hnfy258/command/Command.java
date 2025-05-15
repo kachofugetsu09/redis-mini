@@ -6,4 +6,5 @@ public interface Command {
     CommandType getType();
     void setContext(Resp[] array);
     Resp handle();
+    boolean isWriteCommand();
 }

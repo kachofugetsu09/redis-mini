@@ -2,6 +2,7 @@ package site.hnfy258.command;
 
 import lombok.Getter;
 import site.hnfy258.command.impl.Ping;
+import site.hnfy258.command.impl.Select;
 import site.hnfy258.command.impl.hash.Hdel;
 import site.hnfy258.command.impl.hash.Hget;
 import site.hnfy258.command.impl.hash.Hset;
@@ -33,7 +34,8 @@ public enum CommandType {
     HGET(Hget::new),
     HDEL(Hdel::new),
     ZADD(Zadd::new),
-    ZRANGE(Zrange::new);
+    ZRANGE(Zrange::new),
+    SELECT(Select::new);
 
     private final Function<RedisCore, Command> supplier;
 

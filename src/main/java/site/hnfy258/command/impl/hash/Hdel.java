@@ -49,4 +49,9 @@ public class Hdel implements Command {
         }
         return new Errors("WRONGTYPE Operation against a key holding the wrong kind of value");
     }
+
+    @Override
+    public boolean isWriteCommand() {
+        return true;
+    }
 }

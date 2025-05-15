@@ -121,4 +121,9 @@ public class Zrange implements Command {
             return new Errors("ERR " + e.getMessage());
         }
     }
+
+    @Override
+    public boolean isWriteCommand() {
+        return false;
+    }
 }

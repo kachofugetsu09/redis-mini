@@ -47,4 +47,9 @@ public class Lpop implements Command {
 
 
     }
+
+    @Override
+    public boolean isWriteCommand() {
+        return true;
+    }
 }

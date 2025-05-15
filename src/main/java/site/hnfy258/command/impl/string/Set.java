@@ -49,4 +49,9 @@ public class Set implements Command {
 
         return new SimpleString("OK");
     }
+
+    @Override
+    public boolean isWriteCommand() {
+        return true;
+    }
 }

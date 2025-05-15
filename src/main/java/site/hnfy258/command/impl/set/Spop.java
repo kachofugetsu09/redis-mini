@@ -72,4 +72,9 @@ public class Spop implements Command {
         }
         return new Errors("命令执行失败");
     }
+
+    @Override
+    public boolean isWriteCommand() {
+        return true;
+    }
 }

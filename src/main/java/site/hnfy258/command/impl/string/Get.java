@@ -48,4 +48,9 @@ public class Get implements Command {
         }
         return new Errors("ERR unknown error");
     }
+
+    @Override
+    public boolean isWriteCommand() {
+        return false;
+    }
 }
