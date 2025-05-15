@@ -5,6 +5,7 @@ import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.channel.ChannelHandler.Sharable;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
+import site.hnfy258.aof.AofManager;
 import site.hnfy258.command.Command;
 import site.hnfy258.command.CommandType;
 import site.hnfy258.datastructure.RedisBytes;
@@ -18,10 +19,12 @@ import site.hnfy258.server.core.RedisCore;
 @Getter
 @Sharable
 public class RespCommandHandler extends SimpleChannelInboundHandler<Resp> {
+    private AofManager aofManager;
 
     private final RedisCore redisCore;
-    public RespCommandHandler(RedisCore redisCore) {
+    public RespCommandHandler(RedisCore redisCore, AofManager aofManager) {
         this.redisCore = redisCore;
+        this.aofManager = aofManager;
     }
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, Resp msg) throws Exception {
@@ -57,6 +60,11 @@ public class RespCommandHandler extends SimpleChannelInboundHandler<Resp> {
             Command command = commandType.getSupplier().apply(redisCore);
             command.setContext(array);
             Resp result = command.handle();
+
+
+            if(aofManager !=null){
+                aofManager.append(respArray);
+            }
 
             return result;
             }catch (Exception e){
