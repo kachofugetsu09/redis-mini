@@ -1,6 +1,8 @@
 package site.hnfy258.datastructure;
 
 import site.hnfy258.internal.Dict;
+import site.hnfy258.protocal.BulkString;
+import site.hnfy258.protocal.Resp;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -23,6 +25,18 @@ public class RedisSet implements RedisData{
     @Override
     public void setTimeout(long timeout) {
         this.timeout = timeout;
+    }
+
+    @Override
+    public List<Resp> convertToResp() {
+        List<Resp> result = new ArrayList<>();
+        if(setCore.size() == 0){
+            return Collections.emptyList();
+        }
+        for(RedisBytes key : setCore.keySet()){
+            result.add(new BulkString(key));
+        }
+        return result;
     }
 
     public int add(List<RedisBytes> members){
@@ -62,5 +76,14 @@ public class RedisSet implements RedisData{
 
     public int size(){
         return setCore.size();
+    }
+
+    public RedisBytes[] getAll() {
+        RedisBytes[] result = new RedisBytes[setCore.size()];
+        int i = 0;
+        for(RedisBytes key : setCore.keySet()){
+            result[i++] = key;
+        }
+        return result;
     }
 }

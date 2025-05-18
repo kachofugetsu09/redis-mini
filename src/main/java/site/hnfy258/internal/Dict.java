@@ -1,5 +1,7 @@
 package site.hnfy258.internal;
 
+import site.hnfy258.datastructure.RedisBytes;
+
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -34,6 +36,28 @@ public class Dict<K,V> {
             entry = entry.next;
         }
         return false;
+    }
+
+    public Iterable<? extends Map.Entry<Object, Object>> entrySet() {
+        if(rehashIndex != -1) rehashStep();
+        Map<Object, Object> map = new HashMap<>();
+        for(int i =0; i < ht0.size; i++){
+            DictEntry<K,V> entry = ht0.table[i];
+            while(entry != null){
+                map.put( entry.key, entry.value);
+                entry = entry.next;
+            }
+        }
+        if(rehashIndex != -1 && ht1 !=null){
+            for(int i =0; i < ht1.size; i++){
+                DictEntry<K,V> entry = ht1.table[i];
+                while(entry != null){
+                    map.put(entry.key, entry.value);
+                    entry = entry.next;
+                }
+            }
+        }
+        return map.entrySet();
     }
 
     static class DictEntry<K,V>{

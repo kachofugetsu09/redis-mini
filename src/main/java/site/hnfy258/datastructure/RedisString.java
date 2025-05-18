@@ -1,6 +1,11 @@
 package site.hnfy258.datastructure;
 
 import site.hnfy258.internal.Sds;
+import site.hnfy258.protocal.BulkString;
+import site.hnfy258.protocal.Resp;
+
+import java.util.Collections;
+import java.util.List;
 
 public class RedisString implements RedisData{
     private volatile long timeout;
@@ -18,6 +23,14 @@ public class RedisString implements RedisData{
     @Override
     public void setTimeout(long timeout) {
         this.timeout = timeout;
+    }
+
+    @Override
+    public List<Resp> convertToResp() {
+        if(value == null){
+            return Collections.emptyList();
+        }
+        return Collections.singletonList(new BulkString(getValue()));
     }
 
     public RedisBytes getValue() {

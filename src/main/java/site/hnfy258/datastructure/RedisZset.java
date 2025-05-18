@@ -2,8 +2,13 @@ package site.hnfy258.datastructure;
 
 import site.hnfy258.internal.Dict;
 import site.hnfy258.internal.SkipList;
+import site.hnfy258.protocal.BulkString;
+import site.hnfy258.protocal.Resp;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 
 public class RedisZset implements RedisData{
     private volatile long timeout = -1;
@@ -22,6 +27,25 @@ public class RedisZset implements RedisData{
     @Override
     public void setTimeout(long timeout) {
         this.timeout = timeout;
+    }
+
+    @Override
+    public List<Resp> convertToResp() {
+        List<Resp> result = new ArrayList<>();
+        if(dict.size() == 0){
+            return Collections.emptyList();
+        }
+        for(Double score : dict.keySet()){
+            Object member = dict.get(score);
+            Resp[] resp = new Resp[2];
+            resp[0] = new BulkString(score.toString().getBytes());
+            if(member instanceof RedisBytes){
+                resp[1] = new BulkString(((RedisBytes) member).getBytes());
+            }else{
+                resp[1] = new BulkString(member.toString().getBytes());
+            }
+        }
+        return result;
     }
 
     public boolean add(double score, Object member){
@@ -52,5 +76,9 @@ public class RedisZset implements RedisData{
 
     public int size(){
         return dict.size();
+    }
+    @SuppressWarnings("unchecked")
+    public Iterable<? extends Map.Entry<Double, Object>> getAll() {
+        return (Iterable<? extends Map.Entry<Double, Object>>) dict.entrySet();
     }
 }
