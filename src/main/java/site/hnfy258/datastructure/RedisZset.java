@@ -1,19 +1,21 @@
 package site.hnfy258.datastructure;
 
+import lombok.Getter;
+import lombok.Setter;
 import site.hnfy258.internal.Dict;
 import site.hnfy258.internal.SkipList;
 import site.hnfy258.protocal.BulkString;
 import site.hnfy258.protocal.Resp;
+import site.hnfy258.protocal.RespArray;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-
+import java.util.*;
+@Setter
+@Getter
 public class RedisZset implements RedisData{
     private volatile long timeout = -1;
     private SkipList<String> skipList;
     private Dict<Double,Object> dict;
+    private RedisBytes key;
 
     public RedisZset() {
         skipList = new SkipList<>();
@@ -35,17 +37,24 @@ public class RedisZset implements RedisData{
         if(dict.size() == 0){
             return Collections.emptyList();
         }
-        for(Double score : dict.keySet()){
-            Object member = dict.get(score);
-            Resp[] resp = new Resp[2];
-            resp[0] = new BulkString(score.toString().getBytes());
-            if(member instanceof RedisBytes){
-                resp[1] = new BulkString(((RedisBytes) member).getBytes());
-            }else{
-                resp[1] = new BulkString(member.toString().getBytes());
-            }
-        }
-        return result;
+       for(Map.Entry<Object,Object> entry : dict.entrySet()) {
+           if (!(entry.getKey() instanceof Double)) {
+               continue;
+           }
+           Double score = (Double) entry.getKey();
+           Object member = entry.getValue();
+           List<Resp> zaddCommand = new ArrayList<>();
+           zaddCommand.add(new BulkString("ZADD".getBytes()));
+           zaddCommand.add(new BulkString(key.getBytes()));
+           zaddCommand.add(new BulkString(score.toString().getBytes()));
+           if (member instanceof RedisBytes) {
+               zaddCommand.add(new BulkString(((RedisBytes) member).getBytes()));
+           } else {
+               zaddCommand.add(new BulkString(member.toString().getBytes()));
+           }
+           result.add(new RespArray(zaddCommand.toArray(new Resp[0])));
+       }
+       return result;
     }
 
     public boolean add(double score, Object member){
@@ -79,6 +88,13 @@ public class RedisZset implements RedisData{
     }
     @SuppressWarnings("unchecked")
     public Iterable<? extends Map.Entry<Double, Object>> getAll() {
-        return (Iterable<? extends Map.Entry<Double, Object>>) dict.entrySet();
+        // 使用显式类型转换创建一个新的包含正确类型的集合
+        Map<Double, Object> typedMap = new HashMap<>();
+        for (Map.Entry<Object, Object> entry : dict.entrySet()) {
+            if (entry.getKey() instanceof Double) {
+                typedMap.put((Double) entry.getKey(), entry.getValue());
+            }
+        }
+        return typedMap.entrySet();
     }
 }

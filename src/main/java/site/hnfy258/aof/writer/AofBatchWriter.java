@@ -147,8 +147,10 @@ public class AofBatchWriter {
             try{
                 ByteBuffer byteBuffer = byteBuf.nioBuffer();
                 writer.write(byteBuffer);
+                flush();
             }finally {
                 byteBuf.release();
+                return;
             }
         }
 
@@ -166,7 +168,6 @@ public class AofBatchWriter {
                 writer.write(byteBuffer);
                 byteBuf.release();
             }
-            forceFlush.set(true);
         }catch(Exception e){
             byteBuf.release();
             Thread.currentThread().interrupt();
@@ -175,14 +176,26 @@ public class AofBatchWriter {
     }
 
     public void flush() throws Exception{
-        while(!writeQueue.isEmpty()){
+        int retryCount = 0;
+        int maxRetries = 3;
+        while(!writeQueue.isEmpty() && retryCount < maxRetries){
             try{
-                Thread.sleep(1);
+                Thread.sleep(10);
+                writer.flush();
+                retryCount++;
             }catch(InterruptedException e){
                 Thread.currentThread().interrupt();
                 break;
+            }catch(IOException e){
+                log.error("Failed to flush AOF file", e);
+                retryCount++;
+                if(retryCount >= maxRetries){
+                    throw e;
+                }
             }
-            writer.flush();
+            if(!writeQueue.isEmpty()){
+                throw new IOException("刷盘超时，队列中还有"+writeQueue.size()+"个数据未写入");
+            }
         }
     }
 

@@ -45,7 +45,7 @@ public class Set implements Command {
             }
         }
         redisCore.put(key, new RedisString(new Sds(value.getBytes())));
-        log.info("set key:{} value:{}", key, value);
+//        log.info("set key:{} value:{}", key, value);
 
         return new SimpleString("OK");
     }

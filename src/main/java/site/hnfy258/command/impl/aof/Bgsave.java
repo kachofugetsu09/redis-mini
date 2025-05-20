@@ -1,4 +1,4 @@
-package site.hnfy258.command.impl;
+package site.hnfy258.command.impl.aof;
 
 import site.hnfy258.command.Command;
 import site.hnfy258.command.CommandType;
@@ -6,8 +6,6 @@ import site.hnfy258.protocal.Errors;
 import site.hnfy258.protocal.Resp;
 import site.hnfy258.protocal.SimpleString;
 import site.hnfy258.server.core.RedisCore;
-import site.hnfy258.server.RedisServer;
-import site.hnfy258.rdb.RdbManager;
 
 public class Bgsave implements Command {
     private RedisCore redisCore;

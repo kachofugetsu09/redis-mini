@@ -1,5 +1,7 @@
 package site.hnfy258.datastructure;
 
+import lombok.Getter;
+import lombok.Setter;
 import site.hnfy258.internal.Dict;
 import site.hnfy258.protocal.BulkString;
 import site.hnfy258.protocal.Resp;
@@ -9,10 +11,12 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-
+@Setter
+@Getter
 public class RedisHash implements RedisData{
     private volatile long timeout = -1;
     private Dict<RedisBytes,RedisBytes>hash;
+    private RedisBytes key;
 
     public RedisHash() {
         this.hash = new Dict<>();
@@ -30,17 +34,29 @@ public class RedisHash implements RedisData{
 
     @Override
     public List<Resp> convertToResp() {
-        List<Resp> result = new ArrayList<>();
-        if(hash.size() ==0){
-            return result;
+        if(hash == null || hash.size() == 0){
+            return Collections.emptyList();
         }
+        List<Resp> result = new ArrayList<>();
         for(Map.Entry<Object, Object> entry : hash.entrySet()){
-           Resp[] resp = new Resp[2];
-           RedisBytes key = (RedisBytes) entry.getKey();
-           RedisBytes value = (RedisBytes) entry.getValue();
-           resp[0] = new BulkString(key);
-           resp[1] = new BulkString(value);
-           result.add(new RespArray(resp));
+            Object field = entry.getKey();
+            Object value = entry.getValue();
+            List<Resp> hsetCommand = new ArrayList<>();
+            hsetCommand.add(new BulkString("HSET".getBytes()));
+            hsetCommand.add(new BulkString(key.getBytes()));
+            if(field instanceof RedisBytes) {
+                hsetCommand.add(new BulkString(((RedisBytes) field).getBytes()));
+            }
+            else{
+                hsetCommand.add(new BulkString(field.toString().getBytes()));
+            }
+            if(value instanceof RedisBytes) {
+                hsetCommand.add(new BulkString(((RedisBytes) value).getBytes()));
+            }
+            else{
+                hsetCommand.add(new BulkString(value.toString().getBytes()));
+            }
+            result.add(new RespArray(hsetCommand.toArray(new Resp[0])));
         }
         return result;
     }

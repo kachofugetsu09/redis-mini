@@ -1,17 +1,22 @@
 package site.hnfy258.datastructure;
 
+import lombok.Getter;
+import lombok.Setter;
 import site.hnfy258.internal.Dict;
 import site.hnfy258.protocal.BulkString;
 import site.hnfy258.protocal.Resp;
+import site.hnfy258.protocal.RespArray;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Random;
-
+@Setter
+@Getter
 public class RedisSet implements RedisData{
     private volatile long timeout = -1;
     private Dict<RedisBytes, Object> setCore;
+    private RedisBytes key;
 
     public RedisSet() {
         this.setCore = new Dict<>();
@@ -33,9 +38,13 @@ public class RedisSet implements RedisData{
         if(setCore.size() == 0){
             return Collections.emptyList();
         }
-        for(RedisBytes key : setCore.keySet()){
-            result.add(new BulkString(key));
+        List<Resp> saddCommand = new ArrayList<>();
+        saddCommand.add(new BulkString("SADD".getBytes()));
+        saddCommand.add(new BulkString(key.getBytes()));
+        for(RedisBytes member : setCore.keySet()){
+            saddCommand.add(new BulkString(member.getBytes()));
         }
+        result.add(new RespArray(saddCommand.toArray(new Resp[0])));
         return result;
     }
 

@@ -8,12 +8,11 @@ import io.netty.channel.EventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
-import io.netty.handler.codec.string.StringDecoder;
-import io.netty.handler.codec.string.StringEncoder;
-import io.netty.util.concurrent.DefaultEventExecutor;
 import io.netty.util.concurrent.DefaultEventExecutorGroup;
 import io.netty.util.concurrent.DefaultThreadFactory;
 import io.netty.util.concurrent.EventExecutorGroup;
+import lombok.Getter;
+import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import site.hnfy258.aof.AofManager;
 import site.hnfy258.rdb.RdbManager;
@@ -23,10 +22,9 @@ import site.hnfy258.server.handler.RespCommandHandler;
 import site.hnfy258.server.handler.RespDecoder;
 import site.hnfy258.server.handler.RespEncoder;
 
-import java.io.FileNotFoundException;
-
 
 @Slf4j
+
 public class RedisMiniServer implements RedisServer{
     private static final int DEFAULT_DBCOUNT = 16;
 
@@ -40,9 +38,9 @@ public class RedisMiniServer implements RedisServer{
     private Channel serverChannel;
 
     public RespCommandHandler commandHandler;
-    private static final boolean ENABLE_AOF = false;
+    private static final boolean ENABLE_AOF = true;
     private AofManager aofManager;
-    private static final boolean ENABLE_RDB = true;
+    private static final boolean ENABLE_RDB = false;
     private RdbManager rdbManager;
 
     private RedisCore redisCore;
@@ -131,5 +129,10 @@ public class RedisMiniServer implements RedisServer{
             throw new IllegalStateException("RDB manager is not initialized");
         }
         return rdbManager;
+    }
+
+    @Override
+    public AofManager getAofManager() {
+        return aofManager;
     }
 }

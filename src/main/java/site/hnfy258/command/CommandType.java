@@ -1,7 +1,8 @@
 package site.hnfy258.command;
 
 import lombok.Getter;
-import site.hnfy258.command.impl.Bgsave;
+import site.hnfy258.command.impl.aof.Bgrewriteaof;
+import site.hnfy258.command.impl.aof.Bgsave;
 import site.hnfy258.command.impl.Ping;
 import site.hnfy258.command.impl.Select;
 import site.hnfy258.command.impl.hash.Hdel;
@@ -37,7 +38,8 @@ public enum CommandType {
     ZADD(Zadd::new),
     ZRANGE(Zrange::new),
     SELECT(Select::new),
-    BGSAVE(Bgsave::new);
+    BGSAVE(Bgsave::new),
+    BGREWRITEAOF(Bgrewriteaof::new);
 
     private final Function<RedisCore, Command> supplier;
 

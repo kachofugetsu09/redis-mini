@@ -1,16 +1,21 @@
 package site.hnfy258.datastructure;
 
+import lombok.Getter;
+import lombok.Setter;
 import site.hnfy258.protocal.BulkString;
 import site.hnfy258.protocal.Resp;
+import site.hnfy258.protocal.RespArray;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedList;
 import java.util.List;
-
+@Setter
+@Getter
 public class RedisList implements RedisData{
     private volatile long timeout = -1;
     private LinkedList<RedisBytes> list;
+    private RedisBytes key;
 
     public RedisList() {
         this.list = new LinkedList<>();
@@ -27,11 +32,17 @@ public class RedisList implements RedisData{
 
     @Override
     public List<Resp> convertToResp() {
-        List<Resp> result = new ArrayList<>();
-        for(RedisBytes value : list){
-            result.add(new BulkString(value));
+        if(list == null || list.size() == 0){
+            return Collections.emptyList();
         }
-        return result;
+        List<Resp> lpushCommand = new ArrayList<>();
+        lpushCommand.add(new BulkString("LPUSH".getBytes()));
+        lpushCommand.add(new BulkString(key.getBytes()));
+        for(RedisBytes value : list){
+            lpushCommand.add(new BulkString(value));
+        }
+        return Collections.singletonList(new RespArray(lpushCommand.toArray(new Resp[0])));
+
     }
 
     public int size(){
