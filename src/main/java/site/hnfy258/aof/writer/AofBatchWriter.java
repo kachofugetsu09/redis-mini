@@ -8,6 +8,8 @@ import java.nio.ByteBuffer;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+
 @Slf4j
 public class AofBatchWriter {
     private final Writer writer;
@@ -37,6 +39,10 @@ public class AofBatchWriter {
 
     //大命令的参数
     private static final int LARGE_COMMAND_THRESHOLD = 512*1024;
+
+
+    private AtomicLong batchCount = new AtomicLong(0);
+    private AtomicLong totalBatchedCommands = new AtomicLong(0);
 
     public AofBatchWriter(Writer fileWriter, int  flushInterval){
         this.writer = fileWriter;
@@ -134,6 +140,8 @@ public class AofBatchWriter {
             }
             buffer.flip();
             writer.write(buffer);
+            batchCount.incrementAndGet();
+            totalBatchedCommands.addAndGet(batchSize);
         }catch(Exception e){
             log.error("Failed to write batch to AOF file", e);
         }
@@ -199,28 +207,66 @@ public class AofBatchWriter {
         }
     }
 
-    public void close() throws Exception{
-        if(flushScheduler != null){
-            flushScheduler.shutdown();
-            try{
-                flushScheduler.shutdownNow();
-                flushScheduler.awaitTermination(3, TimeUnit.SECONDS);
-            }catch(InterruptedException e){
-                flushScheduler.shutdownNow();
-                Thread.currentThread().interrupt();
+    public void close() throws Exception {
+        if (flushScheduler != null) {
+            try {
+                flushScheduler.shutdown();
+                try {
+                    flushScheduler.shutdownNow();
+                    boolean terminated = flushScheduler.awaitTermination(3, TimeUnit.SECONDS);
+                    if (!terminated) {
+                        log.warn("刷盘调度超时");
+                    }
+                } catch (InterruptedException e) {
+                    flushScheduler.shutdownNow();
+                    Thread.currentThread().interrupt();
+                    log.warn("刷盘调度被中断");
+                }
+            } catch (Exception e) {
+                log.error("关闭刷盘调度器时发生错误", e);
+            }
+            try {
+                flush();
+            } catch (Exception e) {
+                log.error("关闭刷盘调度器时发生错误", e);
+            }
+            running.set(false);
+
+            if (writeThread != null && writeThread.isAlive()) {
+                writeThread.interrupt();
+                try {
+                    writeThread.join(1000);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
             }
         }
-        flush();
-        running.set(false);
-        writeThread.interrupt();
     }
 
     private void applyBackpressure() {
-        if(pendingBytes.get() > DEFAULT_BACKPRESSURE_THRESHOLD){
-            try{
-                long waitTime = Math.min(20,(pendingBytes.get()-DEFAULT_BACKPRESSURE_THRESHOLD)/1024);
+        int currentBytes = pendingBytes.get();
+        int queueSize = writeQueue.size();
+
+        double pressureLevel = Math.max((double) currentBytes / DEFAULT_BACKPRESSURE_THRESHOLD, (double) queueSize / DEFAULT_QUEUQ_SIZE * 0.75);
+
+        if (pressureLevel >= 1) {
+            try {
+                long waitTime = Math.min(50, (long) (pressureLevel * 20));
+
+                if (pressureLevel >= 1.5) {
+                    log.warn("AOF写入压力过大，当前队列大小为{}，当前待写入字节数为{}", queueSize, currentBytes);
+                }
+
+                if (pressureLevel >= 2) {
+                    try {
+                        forceFlush.set(true);
+                    } catch (Exception e) {
+                        log.error("强制刷盘失败", e);
+                    }
+                }
+
                 Thread.sleep(waitTime);
-            }catch(InterruptedException e){
+            } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
         }
@@ -241,4 +287,7 @@ public class AofBatchWriter {
     }
 
 
+    public int getBatchCount() {
+        return (int) batchCount.get();
+    }
 }

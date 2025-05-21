@@ -44,17 +44,24 @@ public class AofManager {
     }
 
     public void append(RespArray respArray) throws IOException {
-        writeLock.lock();
+        ByteBuf byteBuf = Unpooled.buffer();
+        boolean committedToBatchWriter = false;
+
         try{
-            ByteBuf byteBuf = Unpooled.buffer();
+            respArray.encode(respArray, byteBuf);
+            writeLock.lock();
             try{
-                respArray.encode(respArray, byteBuf);
                 batchWriter.write(byteBuf);
-            }catch(Exception e) {
-                throw new RuntimeException(e);
-            }
+                committedToBatchWriter = true;
             }finally {
-            writeLock.unlock();
+                writeLock.unlock();
+            }
+        }catch(Exception e){
+            throw new RuntimeException("Failed to write batch to AOF file", e);
+        }finally {
+            if(!committedToBatchWriter && byteBuf.refCnt() >0){
+                byteBuf.release();
+            }
         }
     }
 

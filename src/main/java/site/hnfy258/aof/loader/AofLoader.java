@@ -49,15 +49,19 @@ public class AofLoader {
             log.info("channel为空");
             return;
         }
+        ByteBuf commands = null;
         try{
             log.info("开始加载aof文件");
-            ByteBuf commands = readFileContent();
+            commands = readFileContent();
             int succesCount = processCommands(commands);
             log.info("加载aof文件成功,成功加载{}条命令",succesCount);
         }catch(Exception e){
             log.error("加载aof文件失败");
             throw new RuntimeException(e);
         }finally {
+            if(commands !=null && commands.refCnt() >0){
+                commands.release();
+            }
             closeFile();
         }
     }

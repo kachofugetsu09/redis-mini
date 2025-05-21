@@ -59,13 +59,26 @@ public class AofExtremeCaseTest {
         log.info("\n=== 开始清理测试资源 ===");
         try {
             if (aofManager != null) {
-                aofManager.close();
-                aofManager = null;
+                try {
+                    aofManager.flush();
+                } catch (Exception e) {
+                    log.warn("刷新AOF管理器时出错", e);
+                }
+
+                try {
+                    aofManager.close();
+                } catch (Exception e) {
+                    log.warn("关闭AOF管理器时出错", e);
+                } finally {
+                    aofManager = null;
+                }
                 log.info("AOF管理器已关闭");
             }
+
             // 确保强制释放文件资源
             System.gc();
             Thread.sleep(100);
+
             // 尝试删除所有测试文件
             int deletedCount = 0;
             int failedCount = 0;
@@ -86,7 +99,7 @@ public class AofExtremeCaseTest {
             log.info("成功删除文件数: {}, 删除失败文件数: {}", deletedCount, failedCount);
         } catch (Exception e) {
             log.error("清理资源时出错", e);
-            throw e;
+            // 不再抛出异常，避免测试中断
         } finally {
             log.info("=== 测试资源清理完成 ===\n");
         }
@@ -160,7 +173,7 @@ public class AofExtremeCaseTest {
         // 验证数据恢复
         verifyDataRecovery();
         log.info("=== 高频小命令测试完成 ===\n");
-        
+
         // 测试结束后暂停
         pauseBetweenTests();
     }
@@ -200,7 +213,7 @@ public class AofExtremeCaseTest {
         // 验证数据恢复
         verifyDataRecovery();
         log.info("=== 大命令测试完成 ===\n");
-        
+
         // 测试结束后暂停
         pauseBetweenTests();
     }
@@ -255,7 +268,7 @@ public class AofExtremeCaseTest {
         // 验证数据恢复
         verifyDataRecovery();
         log.info("=== 并发写入测试完成 ===\n");
-        
+
         // 测试结束后暂停
         pauseBetweenTests();
     }
@@ -290,7 +303,7 @@ public class AofExtremeCaseTest {
                 (endTime - startTime), fileSize / 1024);
         // 验证数据恢复
         verifyDataRecovery();
-        
+
         // 测试结束后暂停
         pauseBetweenTests();
     }
@@ -355,7 +368,7 @@ public class AofExtremeCaseTest {
             Thread.sleep(200);
         }
         log.info("=== 崩溃恢复测试完成 ===\n");
-        
+
         // 测试结束后暂停
         pauseBetweenTests();
     }
@@ -366,29 +379,37 @@ public class AofExtremeCaseTest {
         int commandCount;
         int batchCount;
         double avgBatchSize;
-        long maxLatency;
-        long minLatency = Long.MAX_VALUE;
-        double avgLatency;
+        double maxLatency;
+        double minLatency = Double.MAX_VALUE;
+        double totalLatency;
         AtomicInteger backpressureCount = new AtomicInteger(0);
         AtomicInteger directWriteCount = new AtomicInteger(0);
-        void recordLatency(long latency) {
-            maxLatency = Math.max(maxLatency, latency);
-            minLatency = Math.min(minLatency, latency);
-            avgLatency = (avgLatency * commandCount + latency) / (commandCount + 1);
+
+        void recordLatency(long latencyNanos) {
+            // 将纳秒转换为毫秒，提供更合理的延迟统计
+            double latencyMs = latencyNanos / 1_000_000.0;
+            maxLatency = Math.max(maxLatency, latencyMs);
+            minLatency = Math.min(minLatency, latencyMs);
+            totalLatency += latencyMs;
             commandCount++;
         }
+
+        double getAvgLatency() {
+            return commandCount > 0 ? totalLatency / commandCount : 0;
+        }
+
         @Override
         public String toString() {
             return String.format(
                     "性能统计:\n" +
-                            "- 总写入时间: %dms\n" +
-                            "- 总写入字节: %.2fMB\n" +
+                            "- 总写入时间: %d ms\n" +
+                            "- 总写入字节: %.2f MB\n" +
                             "- 命令总数: %d\n" +
                             "- 批次总数: %d\n" +
                             "- 平均批次大小: %.2f\n" +
-                            "- 最大延迟: %dms\n" +
-                            "- 最小延迟: %dms\n" +
-                            "- 平均延迟: %.2fms\n" +
+                            "- 最大延迟: %.3f ms\n" +
+                            "- 最小延迟: %.3f ms\n" +
+                            "- 平均延迟: %.3f ms\n" +
                             "- 背压触发次数: %d\n" +
                             "- 直写命令数: %d\n" +
                             "- 吞吐量: %.2f MB/s\n" +
@@ -399,8 +420,8 @@ public class AofExtremeCaseTest {
                     batchCount,
                     avgBatchSize,
                     maxLatency,
-                    minLatency,
-                    avgLatency,
+                    minLatency == Double.MAX_VALUE ? 0.0 : minLatency,
+                    getAvgLatency(),
                     backpressureCount.get(),
                     directWriteCount.get(),
                     (totalBytes / (1024.0 * 1024.0)) / (totalWriteTime / 1000.0),
@@ -437,7 +458,7 @@ public class AofExtremeCaseTest {
                     long cmdStartTime = System.nanoTime();
                     cmd.encode(cmd, buf);
                     directWriter.write(ByteBuffer.wrap(buf.array(), 0, buf.readableBytes()));
-                    directMetrics.recordLatency((System.nanoTime() - cmdStartTime) / 1_000_000); // 转换为毫秒
+                    directMetrics.recordLatency(System.nanoTime() - cmdStartTime);
                     directMetrics.totalBytes += buf.readableBytes();
                 } finally {
                     buf.release();
@@ -459,12 +480,15 @@ public class AofExtremeCaseTest {
                     try {
                         long cmdStartTime = System.nanoTime();
                         cmd.encode(cmd, buf);
-                        batchWriter.write(buf);
-                        batchMetrics.recordLatency((System.nanoTime() - cmdStartTime) / 1_000_000);
-                        batchMetrics.totalBytes += buf.readableBytes();
+                        // 检查是否是大命令
                         if (buf.readableBytes() > LARGE_COMMAND_THRESHOLD) {
                             batchMetrics.directWriteCount.incrementAndGet();
                         }
+                        batchWriter.write(buf);
+                        batchMetrics.recordLatency(System.nanoTime() - cmdStartTime);
+                        batchMetrics.totalBytes += buf.readableBytes();
+                        batchMetrics.batchCount = batchWriter.getBatchCount();
+                        batchMetrics.avgBatchSize = (double) batchMetrics.totalBytes / batchMetrics.batchCount;
                     } catch (Exception e) {
                         buf.release();
                         throw e;
@@ -481,12 +505,30 @@ public class AofExtremeCaseTest {
                 double throughputImprovement =
                         ((batchMetrics.totalBytes / (double)batchMetrics.totalWriteTime) /
                                 (directMetrics.totalBytes / (double)directMetrics.totalWriteTime) - 1) * 100;
-                double latencyImprovement =
-                        ((directMetrics.avgLatency - batchMetrics.avgLatency) /
-                                directMetrics.avgLatency) * 100;
+
+                // 计算延迟改善（注意：较小的延迟更好）
+                double directAvgLatency = directMetrics.getAvgLatency();
+                double batchAvgLatency = batchMetrics.getAvgLatency();
+                double latencyImprovement;
+
+                if (directAvgLatency > 0 && batchAvgLatency > 0) {
+                    latencyImprovement = ((directAvgLatency - batchAvgLatency) / directAvgLatency) * 100;
+                } else {
+                    latencyImprovement = 0.0;
+                }
+
                 log.info("\n性能提升:");
-                log.info("- 吞吐量提升: {:.2f}%", throughputImprovement);
-                log.info("- 平均延迟改善: {:.2f}%", latencyImprovement);
+                if (throughputImprovement > 0) {
+                    log.info("- 吞吐量提升: {}% (批量写入更快)", String.format("%.2f", throughputImprovement));
+                } else {
+                    log.info("- 吞吐量降低: {}% (直接写入更快)", String.format("%.2f", Math.abs(throughputImprovement)));
+                }
+
+                if (latencyImprovement > 0) {
+                    log.info("- 平均延迟改善: {}% (批量写入延迟更低)", String.format("%.2f", latencyImprovement));
+                } else {
+                    log.info("- 平均延迟增加: {}% (直接写入延迟更低)", String.format("%.2f", Math.abs(latencyImprovement)));
+                }
                 // 验证数据一致性
                 verifyDataConsistency(directFile, batchFile);
             } finally {
@@ -502,7 +544,7 @@ public class AofExtremeCaseTest {
                 directWriter.close();
             }
         }
-        
+
         // 测试结束后暂停
         pauseBetweenTests();
     }
@@ -627,7 +669,7 @@ public class AofExtremeCaseTest {
                                 if (writeLatency > 5_000_000) { // 降低背压检测阈值从10ms到5ms
                                     metrics.backpressureCount.incrementAndGet();
                                 }
-                                metrics.recordLatency(writeLatency / 1_000_000);
+                                metrics.recordLatency(writeLatency);
                                 metrics.totalBytes += buf.readableBytes();
                             } catch (Exception e) {
                                 buf.release();
@@ -636,6 +678,8 @@ public class AofExtremeCaseTest {
                             }
                         }
                     } finally {
+                        metrics.batchCount = batchWriter.getBatchCount();
+                        metrics.avgBatchSize = (double) metrics.totalBytes / metrics.batchCount;
                         completionLatch.countDown();
                     }
                 });
@@ -652,27 +696,27 @@ public class AofExtremeCaseTest {
             log.info("背压触发次数: {}", metrics.backpressureCount.get());
             Assertions.assertTrue(metrics.backpressureCount.get() > 0,
                     "背压机制应该被触发至少一次");
-            Assertions.assertTrue(metrics.avgLatency < 1000,
+            Assertions.assertTrue(metrics.getAvgLatency() < 1000,
                     "平均延迟应该被控制在1秒以内");
         } finally {
             executor.shutdownNow();
             try {
                 // 设置更长的超时时间用于清空缓冲区
                 Thread.sleep(1000); // 给线程一些时间来处理中断
-                
+
                 // 确保batchWriter中的所有命令都被处理
                 try {
                     batchWriter.flush(); // 先尝试正常刷新
                 } catch (Exception e) {
                     log.warn("批量写入器刷新失败", e);
                 }
-                
+
                 try {
                     batchWriter.close();
                 } catch (Exception e) {
                     log.warn("关闭批量写入器失败", e);
                 }
-                
+
                 try {
                     slowWriter.close();
                 } catch (Exception e) {
@@ -682,7 +726,7 @@ public class AofExtremeCaseTest {
                 log.error("关闭写入器时出错", e);
             }
         }
-        
+
         // 测试结束后暂停
         pauseBetweenTests();
     }
