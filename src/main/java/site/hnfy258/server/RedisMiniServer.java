@@ -15,6 +15,7 @@ import lombok.Getter;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import site.hnfy258.aof.AofManager;
+import site.hnfy258.cluster.node.RedisNode;
 import site.hnfy258.rdb.RdbManager;
 import site.hnfy258.server.core.RedisCore;
 import site.hnfy258.server.core.RedisCoreImpl;
@@ -24,7 +25,8 @@ import site.hnfy258.server.handler.RespEncoder;
 
 
 @Slf4j
-
+@Getter
+@Setter
 public class RedisMiniServer implements RedisServer{
     private static final int DEFAULT_DBCOUNT = 16;
 
@@ -38,12 +40,15 @@ public class RedisMiniServer implements RedisServer{
     private Channel serverChannel;
 
     public RespCommandHandler commandHandler;
-    private static final boolean ENABLE_AOF = true;
+    private static final boolean ENABLE_AOF = false;
     private AofManager aofManager;
-    private static final boolean ENABLE_RDB = false;
+    private static final boolean ENABLE_RDB = true;
     private RdbManager rdbManager;
 
     private RedisCore redisCore;
+
+    private RedisNode redisNode;
+
     public RedisMiniServer(String host, int port) throws Exception {
         this.host = host;
         this.port = port;

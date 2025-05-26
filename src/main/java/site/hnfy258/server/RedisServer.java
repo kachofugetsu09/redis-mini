@@ -1,6 +1,7 @@
 package site.hnfy258.server;
 
 import site.hnfy258.aof.AofManager;
+import site.hnfy258.cluster.node.RedisNode;
 import site.hnfy258.rdb.RdbManager;
 
 import javax.script.ScriptContext;
@@ -13,4 +14,6 @@ public interface RedisServer {
     RdbManager getRdbManager();
 
     AofManager getAofManager();
+
+    void setRedisNode(RedisNode masterNode);
 }
