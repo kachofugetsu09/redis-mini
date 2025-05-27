@@ -10,6 +10,11 @@ import io.netty.util.concurrent.EventExecutorGroup;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
+import site.hnfy258.cluster.replication.ReplicationHandler;
+import site.hnfy258.cluster.replication.ReplicationStateMachine;
+import site.hnfy258.protocal.BulkString;
+import site.hnfy258.protocal.Resp;
+import site.hnfy258.protocal.RespArray;
 import site.hnfy258.server.RedisServer;
 import site.hnfy258.server.core.RedisCore;
 import site.hnfy258.server.handler.RespDecoder;
@@ -30,6 +35,7 @@ public class RedisNode {
     private EventExecutorGroup commandExecutor;
 
     private final NodeState nodeState;
+    private final ReplicationStateMachine replicationStateMachine;
 
     public RedisNode(RedisServer redisServer,
                      String host,
@@ -39,6 +45,12 @@ public class RedisNode {
         this.redisServer = redisServer;
         this.commandExecutor = new DefaultEventExecutorGroup(1, new DefaultThreadFactory("redis-ms"));
         this.nodeState = new NodeState(nodeId,host,port,isMaster);
+
+        if(redisServer !=null){
+            this.redisCore = redisServer.getRedisCore();
+        }
+
+        this.replicationStateMachine = new ReplicationStateMachine();
     }
 
     //=================辅助方法===============
@@ -141,7 +153,7 @@ public class RedisNode {
                     protected void initChannel(Channel ch) throws Exception {
                         ChannelPipeline pipeline = ch.pipeline();
                         pipeline.addLast(new RespDecoder());
-//                        pipeline.addLast(commandExecutor, new ReplicationHandler(RedisNode.this));
+                        pipeline.addLast(commandExecutor, new ReplicationHandler(RedisNode.this));
                         pipeline.addLast(new RespEncoder());
                     }
                 });
@@ -149,7 +161,21 @@ public class RedisNode {
         bootstrap.connect(getMasterHost(),getMasterPort()).addListener((ChannelFutureListener) f1 -> {
             if(f1.isSuccess()) {
                 setClientChannel(f1.channel());
+                Resp[] psyncCommand = new Resp[3];
+                psyncCommand[0] = new BulkString("PSYNC".getBytes());
+                psyncCommand[1] = new BulkString("?".getBytes());
+                psyncCommand[2] = new BulkString("-1".getBytes());
+                RespArray command = new RespArray(psyncCommand);
                 log.info("成功连接到主节点 {}:{}", getMasterHost(), getMasterPort());
+                getClientChannel().writeAndFlush(command).addListener((ChannelFutureListener) f -> {
+                    if (f.isSuccess()) {
+                        log.info("向主节点 {}:{} 发送 PSYNC 命令成功", getMasterHost(), getMasterPort());
+                    } else {
+                        log.error("向主节点 {}:{} 发送 PSYNC 命令失败", getMasterHost(), getMasterPort(), f.cause());
+                        group.shutdownGracefully();
+                        future.completeExceptionally(f.cause());
+                    }
+                });
                 future.complete(null);
             } else {
                 log.error("连接到主节点 {}:{} 失败", getMasterHost(), getMasterPort(), f1.cause());
@@ -177,5 +203,10 @@ public class RedisNode {
             commandExecutor = null;
         }
         nodeState.cleanup();
+    }
+
+    public boolean receiveRdbFromMaster(byte[] rdbData) {
+        //todo 处理从主节点接收的RDB数据
+        return false;
     }
 }

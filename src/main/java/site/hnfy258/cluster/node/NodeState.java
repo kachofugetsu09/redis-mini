@@ -4,10 +4,13 @@ import io.netty.channel.Channel;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
+import site.hnfy258.cluster.replication.ReplBackLog;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+
 @Getter
 @Setter
 @Slf4j
@@ -27,12 +30,44 @@ public class NodeState {
     private final List<RedisNode> slaves = new ArrayList<>();
 
 
+
+    private final AtomicLong replicationOffset = new AtomicLong(0);
+    private final AtomicLong masterReplicationOffset = new AtomicLong(0);
+    private final AtomicBoolean readyForReplCommands = new AtomicBoolean(false);
+    private volatile ReplBackLog replBackLog;
+
+
     public NodeState(String nodeId, String host, int port, boolean isMaster) {
         this.nodeId = nodeId;
         this.host = host;
         this.port = port;
         this.isMaster = isMaster;
     }
+
+    public long getReplicationOffset() {
+        return replicationOffset.get();
+    }
+
+    public void setReplicationOffset(long offset) {
+        replicationOffset.getAndSet(offset);
+    }
+
+    public long getMasterReplicationOffset() {
+        return masterReplicationOffset.get();
+    }
+
+    public void setMasterReplicationOffset(long offset) {
+        masterReplicationOffset.getAndSet(offset);
+    }
+
+    public boolean getReadyForReplCommands() {
+        return readyForReplCommands.get();
+    }
+
+    public void setReadyForReplCommands(boolean ready) {
+        readyForReplCommands.set(ready);
+    }
+
 
     public synchronized void setMasterNode(RedisNode masterNode) {
        if(isMaster){
