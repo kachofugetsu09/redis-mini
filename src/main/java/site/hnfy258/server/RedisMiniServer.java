@@ -44,12 +44,18 @@ public class RedisMiniServer implements RedisServer{
     private AofManager aofManager;
     private static final boolean ENABLE_RDB = true;
     private RdbManager rdbManager;
+    private String rdbFileName;
 
     private RedisCore redisCore;
 
     private RedisNode redisNode;
 
     public RedisMiniServer(String host, int port) throws Exception {
+        this(host, port, "dump.rdb");
+    }
+
+
+    public RedisMiniServer(String host, int port,String rdbFileName) throws Exception {
         this.host = host;
         this.port = port;
         this.bossGroup = new NioEventLoopGroup(1);
@@ -64,7 +70,7 @@ public class RedisMiniServer implements RedisServer{
             Thread.sleep(500);
         }
         if(ENABLE_RDB){
-            this.rdbManager = new RdbManager(redisCore);
+            this.rdbManager = new RdbManager(redisCore,rdbFileName);
             boolean success = rdbManager.loadRdb();
             if(!success){
                 log.warn("RDB文件加载失败，可能是文件不存在或格式错误");

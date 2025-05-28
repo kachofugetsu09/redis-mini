@@ -30,7 +30,7 @@ public class RdbLoader {
             log.error("RDB文件加载失败", e);
             return false;
         }
-        return false;
+        return true;
     }
 
     private void loadAllDatabases(DataInputStream dis) throws IOException {

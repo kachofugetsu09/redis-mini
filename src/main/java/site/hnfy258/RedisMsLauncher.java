@@ -16,12 +16,12 @@ public class RedisMsLauncher {
 
         Thread.sleep(1000);
 
-        RedisServer slaveServer1 = new RedisMiniServer("localhost", 6380);
+        RedisServer slaveServer1 = new RedisMiniServer("localhost", 6380,"slave1.rdb");
         RedisNode slaveNode1 = new RedisNode(slaveServer1, "localhost", 6380, false, "slave-node1");
         slaveServer1.setRedisNode(slaveNode1);
         slaveServer1.start();
 
-        RedisServer slaveServer2 = new RedisMiniServer("localhost", 6381);
+        RedisServer slaveServer2 = new RedisMiniServer("localhost", 6381,"slave2.rdb");
         RedisNode slaveNode2 = new RedisNode(slaveServer2, "localhost", 6381, false, "slave-node2");
         slaveServer2.setRedisNode(slaveNode2);
         slaveServer2.start();

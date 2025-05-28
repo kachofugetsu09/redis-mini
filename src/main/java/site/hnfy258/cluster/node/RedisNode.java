@@ -11,6 +11,7 @@ import lombok.Getter;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import site.hnfy258.cluster.replication.ReplicationHandler;
+import site.hnfy258.cluster.replication.ReplicationManager;
 import site.hnfy258.cluster.replication.ReplicationStateMachine;
 import site.hnfy258.protocal.BulkString;
 import site.hnfy258.protocal.Resp;
@@ -36,6 +37,7 @@ public class RedisNode {
 
     private final NodeState nodeState;
     private final ReplicationStateMachine replicationStateMachine;
+    private ReplicationManager replicationManager;
 
     public RedisNode(RedisServer redisServer,
                      String host,
@@ -51,6 +53,7 @@ public class RedisNode {
         }
 
         this.replicationStateMachine = new ReplicationStateMachine();
+        this.replicationManager = new ReplicationManager(this);
     }
 
     //=================辅助方法===============
@@ -204,9 +207,13 @@ public class RedisNode {
         }
         nodeState.cleanup();
     }
+    // =========================复制相关===================================
 
     public boolean receiveRdbFromMaster(byte[] rdbData) {
-        //todo 处理从主节点接收的RDB数据
-        return false;
+        return replicationManager.receiveAndLoadRdb(rdbData);
+    }
+
+    public Resp doFullSync(ChannelHandlerContext ctx) {
+        return replicationManager.doFullSync(ctx);
     }
 }

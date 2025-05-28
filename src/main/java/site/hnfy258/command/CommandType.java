@@ -5,6 +5,7 @@ import site.hnfy258.command.impl.aof.Bgrewriteaof;
 import site.hnfy258.command.impl.aof.Bgsave;
 import site.hnfy258.command.impl.Ping;
 import site.hnfy258.command.impl.Select;
+import site.hnfy258.command.impl.cluster.Psync;
 import site.hnfy258.command.impl.hash.Hdel;
 import site.hnfy258.command.impl.hash.Hget;
 import site.hnfy258.command.impl.hash.Hset;
@@ -39,7 +40,8 @@ public enum CommandType {
     ZRANGE(Zrange::new),
     SELECT(Select::new),
     BGSAVE(Bgsave::new),
-    BGREWRITEAOF(Bgrewriteaof::new);
+    BGREWRITEAOF(Bgrewriteaof::new),
+    PSYNC(Psync::new);
 
     private final Function<RedisCore, Command> supplier;
 

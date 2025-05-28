@@ -78,4 +78,11 @@ public class RedisCoreImpl implements RedisCore{
     public RedisServer getServer() {
         return server;
     }
+
+    @Override
+    public void flushAll() {
+        for(RedisDB db : databases){
+            db.clear();
+        }
+    }
 }

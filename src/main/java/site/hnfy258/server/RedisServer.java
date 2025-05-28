@@ -19,4 +19,6 @@ public interface RedisServer {
     void setRedisNode(RedisNode masterNode);
 
     RedisCore getRedisCore();
+
+    RedisNode getRedisNode();
 }

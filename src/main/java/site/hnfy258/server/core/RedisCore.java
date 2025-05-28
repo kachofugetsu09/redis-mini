@@ -18,4 +18,6 @@ public interface RedisCore {
     RedisDB[] getDataBases();
 
     RedisServer getServer();
+
+    void flushAll();
 }

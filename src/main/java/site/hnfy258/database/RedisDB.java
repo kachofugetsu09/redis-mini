@@ -41,4 +41,7 @@ public class RedisDB {
     }
 
 
+    public void clear() {
+        data.clear();
+    }
 }
