@@ -1,4 +1,4 @@
-package site.hnfy258.cluster.replication;
+package site.hnfy258.cluster.replication.utils;
 
 import io.netty.channel.ChannelHandlerContext;
 import site.hnfy258.datastructure.RedisBytes;

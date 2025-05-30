@@ -135,4 +135,17 @@ public class NodeState {
             log.error("清理节点状态时发生错误: {}", nodeId, e);
         }
     }
+
+    public boolean isReadyForReplCommands() {
+        return readyForReplCommands.get();
+    }
+
+    public void resetReplBackLog(){
+        if(replBackLog!=null){
+            replBackLog.reset();
+            log.info("重置复制缓冲区");
+        } else {
+            log.warn("无法重置复制缓冲区，因为它未初始化");
+        }
+    }
 }

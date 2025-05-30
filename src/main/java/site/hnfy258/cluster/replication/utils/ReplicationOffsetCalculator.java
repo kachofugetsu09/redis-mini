@@ -1,4 +1,4 @@
-package site.hnfy258.cluster.replication;
+package site.hnfy258.cluster.replication.utils;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
@@ -59,9 +59,7 @@ public final class ReplicationOffsetCalculator {
 
         log.debug("偏移量验证通过，值: {}", correctOffset);
         return true;
-    }
-
-    public static long calculatePostRdbOffset(long masterBaseOffset, int length) {
+    }    public static long calculatePostRdbOffset(long masterBaseOffset, int length) {
         if(masterBaseOffset <0){
             log.warn("主节点偏移量不能为负数，当前值: {}", masterBaseOffset);
             return 0;
@@ -69,9 +67,12 @@ public final class ReplicationOffsetCalculator {
 
         if(length <0){
             log.warn("长度不能为负数，当前值: {}", length);
-            return masterBaseOffset;
+            return 0;
         }
-        log.debug("使用主节点基准偏移量作为rdb后偏移量");
-        return masterBaseOffset;
+        
+        // 1. 符合Redis规范：RDB文件大小不计入复制偏移量
+        // 2. 全量同步后，从节点偏移量应该为0，准备接收增量命令
+        log.debug("RDB数据处理完成，偏移量设为0 (RDB文件大小 {} 字节不计入偏移量)", length);
+        return 0;
     }
 }

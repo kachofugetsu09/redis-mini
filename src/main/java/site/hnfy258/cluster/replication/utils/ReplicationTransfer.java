@@ -1,9 +1,8 @@
-package site.hnfy258.cluster.replication;
+package site.hnfy258.cluster.replication.utils;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelHandlerContext;
-import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import site.hnfy258.cluster.node.RedisNode;
 import site.hnfy258.protocal.BulkString;
@@ -98,6 +97,46 @@ public class ReplicationTransfer {
         }catch(Exception e) {
             log.error("加载RDB数据时发生错误", e);
             return false;
+        }
+    }
+
+    public void sendPartialSyncData(ChannelHandlerContext ctx, byte[] commands, String nodeId) {
+        //1.发送CONTINUE
+        Resp continueResp = new SimpleString("CONTINUE");
+
+        ByteBuf continueBuf = Unpooled.buffer();
+        try{
+            continueResp.encode(continueResp,continueBuf);
+            ctx.writeAndFlush(continueBuf).addListener(future -> {
+                if (future.isSuccess()) {
+                    log.info("增量同步响应发送成功: CONTINUE");
+
+                    //2.如果有增量命令直接发送命令数据
+                    if(commands != null && commands.length >0){
+                        Resp commandsResp = new BulkString(commands);
+                        ByteBuf commandsBuf = Unpooled.buffer();
+                        try{
+                            commandsResp.encode(commandsResp, commandsBuf);
+                            ctx.writeAndFlush(commandsBuf).addListener(commandsFuture -> {
+                                if (commandsFuture.isSuccess()) {
+                                    log.info("增量命令数据发送成功，长度: {} bytes", commands.length);
+                                } else {
+                                    log.error("增量命令数据发送失败", commandsFuture.cause());
+                                }
+                            });
+                        } catch (Exception e) {
+                            log.error("增量命令数据编码失败", e);
+                            commandsBuf.release();
+                        }
+                    }
+
+                } else {
+                    log.error("增量同步响应发送失败", future.cause());
+                }
+            });
+        }catch(Exception e){
+            log.error("增量同步响应编码失败", e);
+            continueBuf.release();
         }
     }
 }

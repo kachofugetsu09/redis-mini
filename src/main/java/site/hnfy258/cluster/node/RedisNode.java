@@ -216,4 +216,13 @@ public class RedisNode {
     public Resp doFullSync(ChannelHandlerContext ctx) {
         return replicationManager.doFullSync(ctx);
     }
+
+    public Resp doPartialSync(ChannelHandlerContext ctx, String masterId, long offset) {
+        return replicationManager.doPartialSync(ctx, masterId, offset);
+    }
+
+    public void propagateCommand(byte[] commandBytes) {
+        replicationManager.propagateCommand(commandBytes);
+
+    }
 }

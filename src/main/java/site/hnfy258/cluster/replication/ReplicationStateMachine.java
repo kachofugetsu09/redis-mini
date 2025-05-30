@@ -243,21 +243,18 @@ public class ReplicationStateMachine {
                 replOffset,
                 masterOffset
         );
-    }
-
-    public long updateReplicationOffset(long commandOffset) {
+    }    public long updateReplicationOffset(long commandOffset) {
         if(commandOffset < 0) {
             log.warn("尝试更新复制偏移量为负值: {}", commandOffset);
             return replicationOffset.get();
         }
 
         long currentOffset = replicationOffset.get();
-        if(commandOffset > currentOffset) {
-            replicationOffset.set(commandOffset);
-            log.debug("更新复制偏移量: {} -> {}", currentOffset, commandOffset);
-        } else {
-            log.debug("不需要更新复制偏移量，当前值: {}, 新值: {}", currentOffset, commandOffset);
-        }
+        // 1. 从节点偏移量应该累加命令大小，而不是直接设置
+        // 2. 这样才能与主节点的偏移量保持同步
+        long newOffset = currentOffset + commandOffset;
+        replicationOffset.set(newOffset);
+        log.debug("更新复制偏移量: {} -> {} (增加 {} 字节)", currentOffset, newOffset, commandOffset);
 
         return replicationOffset.get();
     }

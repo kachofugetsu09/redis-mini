@@ -146,4 +146,19 @@ public class RedisMiniServer implements RedisServer{
     public AofManager getAofManager() {
         return aofManager;
     }
+
+    /**
+     * 设置 Redis 节点，并将其注入到命令处理器中以支持命令传播
+     * @param redisNode Redis 节点实例
+     */
+     @Override
+    public void setRedisNode(RedisNode redisNode) {
+        this.redisNode = redisNode;
+        if (this.redisNode != null) {
+            this.redisNode.setRedisServer(this);
+            if (this.commandHandler != null) {
+                this.commandHandler.setRedisNode(this.redisNode);
+            }
+        }
+    }
 }

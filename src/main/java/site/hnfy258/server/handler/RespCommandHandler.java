@@ -51,6 +51,10 @@ public class RespCommandHandler extends SimpleChannelInboundHandler<Resp> {
         }
     }
 
+    public void setRedisNode(RedisNode redisNode) {
+        this.redisNode = redisNode;
+    }
+
     private Resp processCommand(RespArray respArray,ChannelHandlerContext ctx) {
         if(respArray.getContent().length==0){
             return new Errors("命令不能为空");
@@ -78,11 +82,24 @@ public class RespCommandHandler extends SimpleChannelInboundHandler<Resp> {
                 }
                 log.info("执行PSYNC命令，来自：{}", ctx.channel().remoteAddress());
             }
-            Resp result = command.handle();
-
-
-            if(aofManager !=null && command.isWriteCommand()){
-                aofManager.append(respArray);
+            Resp result = command.handle();            // 写命令处理：AOF持久化 + 主从复制传播
+            if(command.isWriteCommand()){
+                // AOF持久化
+                if(aofManager != null){
+                    aofManager.append(respArray);
+                }
+                
+                // 主从复制：如果是主节点，则自动传播命令给从节点
+                if(redisNode != null && redisNode.isMaster()){
+                    try {
+                        // 将RESP格式的命令传播给从节点
+                        byte[] commandBytes = encodeRespArrayToBytes(respArray);
+                        redisNode.propagateCommand(commandBytes);
+                        log.debug("[主节点] 写命令已传播: {} ({} bytes)", commandName, commandBytes.length);
+                    } catch (Exception e) {
+                        log.error("[主节点] 命令传播失败，命令: {}, 错误: {}", commandName, e.getMessage(), e);
+                    }
+                }
             }
 
             return result;
@@ -91,5 +108,21 @@ public class RespCommandHandler extends SimpleChannelInboundHandler<Resp> {
                 return new Errors("命令执行失败");
             }
         }
+
+    /**
+     * 将RespArray编码为字节数组
+     * 用于主从复制命令传播
+     */
+    private byte[] encodeRespArrayToBytes(RespArray respArray) {
+        io.netty.buffer.ByteBuf buf = io.netty.buffer.Unpooled.buffer();
+        try {
+            respArray.encode(respArray, buf);
+            byte[] bytes = new byte[buf.readableBytes()];
+            buf.readBytes(bytes);
+            return bytes;
+        } finally {
+            buf.release();
+        }
+    }
 }
 

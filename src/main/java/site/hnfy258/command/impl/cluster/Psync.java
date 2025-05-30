@@ -72,13 +72,12 @@ public class Psync implements Command {
                 return nodeToUse.doFullSync(ctx);
             }else{
                 //执行增量同步
-//                return nodeToUse.doPartialSync(ctx, masterId, offset);
+                return nodeToUse.doPartialSync(ctx, masterId, offset);
             }
         }catch(Exception e){
             log.error("Error handling PSYNC command: {}", e.getMessage());
             return new Errors("Error handling PSYNC command: " + e.getMessage());
         }
-        return new Errors("PSYNC command not implemented yet");
     }
 
     @Override

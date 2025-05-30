@@ -1,8 +1,14 @@
 package site.hnfy258.cluster.replication;
 
+import lombok.Getter;
+import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 
+import java.io.StringReader;
+
 @Slf4j
+@Getter
+@Setter
 public class ReplBackLog {
 
     private static final int DEFAULT_BACKLOG_SIZE = 1024*1024; // 默认缓冲区大小1MB
@@ -143,5 +149,38 @@ public class ReplBackLog {
         partialSyncFailedCount = 0;
         baseOffset = 0;
         log.info("已清空缓冲区");
+    }
+
+    public boolean canPartialSync(String masterId, long offset) {
+        //1.检查运行id
+        if(masterRunId == null || !masterRunId.equals(masterId)) {
+            log.warn("主节点运行ID不匹配，无法进行部分同步");
+            partialSyncFailedCount++;
+            lastPartialSyncFailedTime = System.currentTimeMillis();
+            return false;
+        }
+        //2.检查偏移量是否在缓冲区内
+        if(offset < backlogOffset || offset >= backloghistlen) {
+            log.warn("偏移量不在缓冲区范围内，无法进行部分同步");
+            partialSyncFailedCount++;
+            lastPartialSyncFailedTime = System.currentTimeMillis();
+            return false;
+        }
+        //3.可以进行部分重同步
+        partialSyncSuccessCount++;
+        log.info("可以进行部分同步，主节点ID: {}, 偏移量: {}", masterId, offset);
+        return true;
+    }
+
+    public synchronized void reset(){
+        writeIndex = 0;
+        backlogOffset = 1;
+        backloghistlen = 0;
+        hasWrapped = false;
+        log.info("缓冲区已重置");
+    }
+
+    public void setBaseOffset(long prevOffset) {
+        this.baseOffset = prevOffset;
     }
 }
