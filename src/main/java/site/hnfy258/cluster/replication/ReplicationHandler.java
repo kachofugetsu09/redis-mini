@@ -1,6 +1,7 @@
 package site.hnfy258.cluster.replication;
 
 import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import lombok.extern.slf4j.Slf4j;
@@ -9,10 +10,10 @@ import site.hnfy258.cluster.replication.utils.ReplicationOffsetCalculator;
 import site.hnfy258.command.Command;
 import site.hnfy258.command.CommandType;
 import site.hnfy258.datastructure.RedisBytes;
-import site.hnfy258.protocal.BulkString;
-import site.hnfy258.protocal.Resp;
-import site.hnfy258.protocal.RespArray;
-import site.hnfy258.protocal.SimpleString;
+import site.hnfy258.protocal.*;
+
+import java.util.ArrayList;
+import java.util.List;
 
 @Slf4j
 public class ReplicationHandler extends ChannelInboundHandlerAdapter {
@@ -51,9 +52,46 @@ public class ReplicationHandler extends ChannelInboundHandlerAdapter {
 
 
     public void cleanup(){
+        saveConnectionInfoBeforeCleanup();
         cleanupBuffer();
+        stateMachine.softReset();
+        log.info("从节点连接已清理，状态重置为初始状态");
 
-        stateMachine.reset();
+    }    private void saveConnectionInfoBeforeCleanup() {
+        try{
+            String currentMasterId = null;
+            
+            // 优先从复制日志获取 masterRunId
+            if(redisNode.getNodeState().getReplBackLog() != null){
+                currentMasterId = redisNode.getNodeState().getReplBackLog().getMasterRunId();
+            }
+            
+            // 如果复制日志中没有，尝试从已保存的连接信息中获取
+            if(currentMasterId == null && redisNode.getNodeState().hasSavedConnectionInfo()) {
+                currentMasterId = redisNode.getNodeState().getLastKnownMasterId();
+                log.debug("从已保存的连接信息中获取 masterId: {}", currentMasterId);
+            }
+
+            long currentOffset = stateMachine.getReplicationOffset();
+            
+            // 如果偏移量无效，尝试从节点状态获取
+            if(currentOffset <= 0) {
+                currentOffset = redisNode.getNodeState().getReplicationOffset();
+                log.debug("从节点状态获取偏移量: {}", currentOffset);
+            }
+
+            log.info("准备保存连接信息 - masterId: {}, offset: {}", currentMasterId, currentOffset);
+
+            if(currentMasterId != null && currentOffset >= 0){
+                redisNode.getNodeState().saveConnectionInfo(currentMasterId, currentOffset);
+                log.info("成功保存当前连接信息: masterId={}, replicationOffset={}",
+                    currentMasterId, currentOffset);
+            } else {
+                log.warn("无法保存连接信息 - masterId: {}, offset: {} (条件不满足)", currentMasterId, currentOffset);
+            }
+        }catch(Exception e){
+            log.error("保存连接信息时发生错误: {}", e.getMessage(), e);
+        }
     }
 
     private void cleanupBuffer() {
@@ -100,7 +138,9 @@ public class ReplicationHandler extends ChannelInboundHandlerAdapter {
             if(!stateMachine.isReadyForReplCommands()){
                 log.warn("[从节点] 当前状态 {} 不允许处理命令", stateMachine.getCurrentState());
                 return;
-            }            try{
+            }
+            try{
+                redisNode.resetHeartbeatFailedCount();
                 long commandOffset = ReplicationOffsetCalculator.calculateCommandOffset(command);
                 if(commandOffset <= 0){
                     log.warn("[从节点] 命令偏移量计算失败，无法处理命令");
@@ -108,8 +148,13 @@ public class ReplicationHandler extends ChannelInboundHandlerAdapter {
                 }
 
                 long currentOffset = stateMachine.getReplicationOffset();
-                executeReplicationCommand(command);
 
+                boolean executed = executeReplicationCommand(command);
+
+                if(!executed){
+                    log.warn("[从节点] 执行复制命令失败，命令: {}", command);
+                    return;
+                }
                 long newOffset = stateMachine.updateReplicationOffset(commandOffset);
 
                 log.info("[从节点] {} 偏移量: {} -> {}", 
@@ -132,7 +177,19 @@ public class ReplicationHandler extends ChannelInboundHandlerAdapter {
 
             Resp firstElement = response.getContent()[0];
             if (firstElement instanceof SimpleString) {
-                handleSimpleString(ctx, (SimpleString) firstElement);
+                String content = ((SimpleString) firstElement).getContent();
+                if("CONTINUE".equals(content)){
+                    log.info("[从节点]收到部分重同步响应CONTINUE");
+
+                    redisNode.pauseHeartbeat();
+
+                    if(stateMachine.transitionTo(ReplicationState.STREAMING)){
+                        log.debug("状态转换到 STREAMING");
+                    } else {
+                        log.warn("无法转换到 STREAMING 状态，当前状态: {}", stateMachine.getCurrentState());
+                        return;
+                    }
+                }
             }
 
             if (response.getContent().length >= 2) {
@@ -140,15 +197,105 @@ public class ReplicationHandler extends ChannelInboundHandlerAdapter {
                 if (secondElement instanceof BulkString) {
                     BulkString commands = (BulkString) secondElement;
                     if (commands.getContent() != null) {
+                        byte[] commandsData = commands.getContent().getBytes();
                         log.info("接收到部分同步命令，长度: {}", commands.getContent().getBytes().length);
+
+                        processIncrementalSyncCommands(commandsData);
                     }
                 }
             }
+            redisNode.resumeHeartbeat();
         }catch(Exception e){
             log.error("处理部分同步响应时发生错误: {}", e.getMessage(), e);
             stateMachine.transitionTo(ReplicationState.ERROR);
         }
 
+    }
+
+    private void processIncrementalSyncCommands(byte[] commandsData) {
+        if (commandsData == null || commandsData.length == 0) {
+            log.warn("接收到的增量同步命令数据为空，无法处理");
+            return;
+        }
+        try {
+            log.info("处理增量同步命令，长度: {}", commandsData.length);
+            if (commandsData.length > 0) {
+                StringBuilder hex = new StringBuilder();
+                int printLen = Math.min(commandsData.length, 64);
+                for (int i = 0; i < printLen; i++) {
+                    hex.append(String.format("%02x ", commandsData[i]));
+                }
+                log.debug("增量同步命令数据: {}", hex.toString());
+                try {
+                    String preview = new String(commandsData, 0, Math.min(commandsData.length, 64), "UTF-8");
+                    log.debug("增量同步命令预览: {}", preview);
+                } catch (Exception e) {
+                    log.debug("无法将增量同步命令数据转换为字符串: {}", e.getMessage());
+                }
+            }
+            ByteBuf buffer = Unpooled.wrappedBuffer(commandsData);
+
+            try {
+                while (buffer.isReadable()) {
+                    byte firstByte = buffer.getByte(buffer.readerIndex());
+                    if (firstByte == '\n' || firstByte == '\r') {
+                        buffer.readByte(); // 跳过无效的换行符
+                        log.debug("跳过无效换行符");
+                    } else {
+                        break; // 找到有效的命令开始
+                    }
+                }
+
+                List<RespArray> commands = new ArrayList<>();
+
+                while (buffer.isReadable()) {
+                    try {
+                        Resp resp = Resp.decode(buffer);
+                        if (resp instanceof RespArray) {
+                            RespArray command = (RespArray) resp;
+                            if (isValidCommand(command)) {
+                                commands.add(command);
+                            }
+                        }
+                    }catch(Exception e){
+                        log.warn("解码增量同步命令时发生错误，可能是格式不正确: {}", e.getMessage());
+                        break; // 停止处理后续命令
+                    }
+                }
+                log.info("解码到 {} 个增量同步命令", commands.size());
+
+                if(commands.isEmpty()) {
+                    log.warn("没有有效的增量同步命令可处理");
+                    return;
+                }
+
+                int successCount = 0;
+                for(RespArray command : commands){
+                    try{
+                        long commandOffset = ReplicationOffsetCalculator.calculateCommandOffset(command);
+                        if(commandOffset <= 0){
+                            log.warn("命令偏移量计算失败，无法处理命令: {}", command);
+                            continue;
+                        }
+
+                        boolean executed = executeReplicationCommand(command);
+                        if(executed){
+                            successCount++;
+                            long newOffset = stateMachine.updateReplicationOffset(commandOffset);
+                        }
+                    }catch(Exception e){
+                        log.error("处理增量同步命令时发生错误: {}", e.getMessage(), e);
+                    }
+                }
+                log.info("成功处理 {} 个增量同步命令", successCount);
+                syncStateToNodeState();
+            }finally {
+                buffer.release();
+            }
+        }catch (Exception e){
+            log.error("处理增量同步命令时发生错误: {}", e.getMessage(), e);
+            stateMachine.transitionTo(ReplicationState.ERROR);
+        }
     }
 
     private void handleFullSyncResponse(ChannelHandlerContext ctx, RespArray response) {
@@ -169,32 +316,64 @@ public class ReplicationHandler extends ChannelInboundHandlerAdapter {
             log.error("处理全量同步响应时发生错误: {}", e.getMessage(), e);
             stateMachine.transitionTo(ReplicationState.ERROR);
         }
-    }    private void executeReplicationCommand(RespArray command) {
-        if (command == null || command.getContent() == null || command.getContent().length == 0) {
-            log.warn("[从节点] 无效的复制命令: 命令为空");
-            return;
+    }    
+    private boolean  executeReplicationCommand(RespArray command) {
+        if (!isValidCommand(command)) {
+            log.warn("[从节点] 无效的复制命令: {}", command);
+            return false;
         }
-
-        Resp[] content = command.getContent();
-        if (!(content[0] instanceof BulkString)) {
-            log.warn("[从节点] 无效的复制命令: 第一个元素不是BulkString");
-            return;
-        }        try {
-            String commandName = new String(((BulkString) content[0]).getContent().getBytes()).toUpperCase();
-            
-            site.hnfy258.command.CommandType commandType = site.hnfy258.command.CommandType.valueOf(commandName);
-            site.hnfy258.command.Command cmd = commandType.getSupplier().apply(redisNode.getRedisCore());
-            cmd.setContext(content);
-            cmd.handle();
-
+        CommandType commandType;
+        try {
+            String commandName = getCommandName(command);
+            commandType = CommandType.valueOf(commandName.toUpperCase());
         } catch (Exception e) {
-            String cmdName = content[0] instanceof BulkString ?
-                    new String(((BulkString) content[0]).getContent().getBytes()) : "unknown";
-            log.error("[从节点] {} 复制命令执行失败: {} - {}", 
-                redisNode.getNodeId(), cmdName, e.getMessage());
+            log.warn("从节点无法识别命令类型: {}", command, e);
+            return false;
         }
+        Command cmd = commandType.getSupplier().apply(redisNode.getRedisCore());
+        cmd.setContext(command.getContent());
+
+        Resp result = cmd.handle();
+
+        if (result instanceof Errors) {
+            log.warn("[从节点] 执行命令失败: {}", ((Errors) result).getContent());
+            return false;
         }
-    
+        return true;
+    }
+
+    private String getCommandName(RespArray command) {
+        if(!isValidCommand(command)){
+            return "UNKNOWN";
+        }
+        try{
+            BulkString bulkString = (BulkString) command.getContent()[0];
+            return bulkString.getContent().getString().toUpperCase();
+        }catch(Exception e){
+            log.error("获取命令名称时发生错误: {}", e.getMessage(), e);
+            return "UNKNOWN";
+        }
+    }
+
+    private boolean isValidCommand(RespArray command) {
+        if(command == null || command.getContent() == null || command.getContent().length == 0) {
+            log.warn("无效的复制命令: 命令或内容为空");
+            return false;
+        }
+
+         Resp firstElement = command.getContent()[0];
+        if(!(firstElement instanceof BulkString)){
+            return false;
+        }
+
+        BulkString firstBulkString = (BulkString) firstElement;
+        if(firstBulkString.getContent() == null || firstBulkString.getContent().getBytes().length == 0) {
+            log.warn("无效的复制命令: 第一个元素为空");
+            return false;
+        }
+        return true;
+    }
+
 
     private void handleBulkString(ChannelHandlerContext ctx, BulkString bulkString) {
 
@@ -203,11 +382,17 @@ public class ReplicationHandler extends ChannelInboundHandlerAdapter {
             log.error("接收到空的 BulkString 内容");
             return;
         }
+        ReplicationState currentState = stateMachine.getCurrentState().get();
 
-        if(stateMachine.getCurrentState().get() == ReplicationState.SYNCING){
+        if( currentState== ReplicationState.SYNCING){
             processRdbData(content.getBytes());
         }
+        else if(currentState == ReplicationState.STREAMING){
+            byte[] commandsData = content.getBytes();
+            processIncrementalSyncCommands(commandsData);
+        }
         else{
+            log.debug("当前状态 {} 不允许处理 BulkString 内容", currentState);
             ctx.fireChannelRead(content);
         }
     }
@@ -256,6 +441,8 @@ public class ReplicationHandler extends ChannelInboundHandlerAdapter {
             log.info("状态转换到 STREAMING，准备接收增量数据");
             syncStateToNodeState();
             notifyMasterToSyncBacklogOffset(correctOffset);
+
+            redisNode.startHeartbeatManager();
         }catch(Exception e){
             log.error("处理 RDB 数据时发生错误: {}", e.getMessage(), e);
             stateMachine.transitionTo(ReplicationState.ERROR);
@@ -298,9 +485,7 @@ public class ReplicationHandler extends ChannelInboundHandlerAdapter {
         }catch(Exception e){
             log.error("同步状态到节点状态时发生错误: {}", e.getMessage(), e);
         }
-    }
-
-    private void handleSimpleString(ChannelHandlerContext ctx, SimpleString simpleString) {
+    }    private void handleSimpleString(ChannelHandlerContext ctx, SimpleString simpleString) {
         String response = simpleString.getContent();
         log.info("接收到简单字符串响应: {}", response);
 
@@ -311,6 +496,16 @@ public class ReplicationHandler extends ChannelInboundHandlerAdapter {
                 long masterOffset = Long.parseLong(parts[2]);
 
                 log.info("主节点全量同步: masterId={}, masterOffset={}", masterId, masterOffset);
+
+
+                // 保存 masterRunId 到复制日志
+                if(redisNode.getNodeState().getReplBackLog() != null) {
+                    redisNode.getNodeState().getReplBackLog().setMasterRunId(masterId);
+                    log.info("已将 masterRunId 保存到复制日志: {}", masterId);
+                }
+
+                // 设置主节点偏移量到状态机
+                stateMachine.setMasterReplicationOffset(masterOffset);
 
                 if(stateMachine.transitionTo(ReplicationState.SYNCING)){
                     log.debug("状态转换到 SYNCING");

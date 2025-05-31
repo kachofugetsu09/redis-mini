@@ -10,6 +10,7 @@ import io.netty.util.concurrent.EventExecutorGroup;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
+import site.hnfy258.cluster.heartbeat.HeartbeatManager;
 import site.hnfy258.cluster.replication.ReplicationHandler;
 import site.hnfy258.cluster.replication.ReplicationManager;
 import site.hnfy258.cluster.replication.ReplicationStateMachine;
@@ -38,6 +39,9 @@ public class RedisNode {
     private final NodeState nodeState;
     private final ReplicationStateMachine replicationStateMachine;
     private ReplicationManager replicationManager;
+    private HeartbeatManager heartbeatManager;
+
+    private boolean connected = false;
 
     public RedisNode(RedisServer redisServer,
                      String host,
@@ -54,6 +58,7 @@ public class RedisNode {
 
         this.replicationStateMachine = new ReplicationStateMachine();
         this.replicationManager = new ReplicationManager(this);
+        this.heartbeatManager = new HeartbeatManager(this);
     }
 
     //=================辅助方法===============
@@ -165,14 +170,33 @@ public class RedisNode {
             if(f1.isSuccess()) {
                 setClientChannel(f1.channel());
                 Resp[] psyncCommand = new Resp[3];
-                psyncCommand[0] = new BulkString("PSYNC".getBytes());
-                psyncCommand[1] = new BulkString("?".getBytes());
-                psyncCommand[2] = new BulkString("-1".getBytes());
-                RespArray command = new RespArray(psyncCommand);
+                RespArray command = null;
+                if(nodeState.hasSavedConnectionInfo()){
+                    psyncCommand[0] = new BulkString("PSYNC".getBytes());
+                    psyncCommand[1] = new BulkString(nodeState.getLastKnownMasterId().getBytes());
+                    psyncCommand[2] = new BulkString(String.valueOf(nodeState.getLastKnownOffset()).getBytes());
+                    command = new RespArray(psyncCommand);
+                }
+                else if(!connected){
+                    psyncCommand[0] = new BulkString("PSYNC".getBytes());
+                    psyncCommand[1] = new BulkString("?".getBytes());
+                    psyncCommand[2] = new BulkString("-1".getBytes());
+                    command = new RespArray(psyncCommand);
+                }
+
+                else{
+                    psyncCommand[0] = new BulkString("PSYNC".getBytes());
+                    psyncCommand[1] = new BulkString(nodeState.getMasterNode().getNodeId().getBytes());
+                    psyncCommand[2] = new BulkString(String.valueOf(nodeState.getMasterNode().getNodeState().getReplicationOffset()).getBytes());
+                    command = new RespArray(psyncCommand);
+                }
+                connected = true;
                 log.info("成功连接到主节点 {}:{}", getMasterHost(), getMasterPort());
                 getClientChannel().writeAndFlush(command).addListener((ChannelFutureListener) f -> {
                     if (f.isSuccess()) {
                         log.info("向主节点 {}:{} 发送 PSYNC 命令成功", getMasterHost(), getMasterPort());
+
+                        startHeartbeatManager();
                     } else {
                         log.error("向主节点 {}:{} 发送 PSYNC 命令失败", getMasterHost(), getMasterPort(), f.cause());
                         group.shutdownGracefully();
@@ -192,11 +216,84 @@ public class RedisNode {
             log.info("节点 {}:{}", getHost(), getPort());
             return null;
         });
+    }
 
+    public void startHeartbeatManager() {
+        if(!isMaster() && heartbeatManager != null){
+            HeartbeatManager.HeartbeatCallback callback = new HeartbeatManager.HeartbeatCallback() {
+                @Override
+                public void onHeartbeatFailed() {
+                    log.debug("心跳失败，尝试重新连接主节点 {}:{}", getMasterHost(), getMasterPort());
+                }
 
+                @Override
+                public void onConnectionLost() {
+                    log.warn("与主节点 {}:{} 连接丢失，尝试重新连接", getMasterHost(), getMasterPort());
+                    handleConnectionLost();
+                }
+            };
+            heartbeatManager.startHeartbeat(callback);
+            log.info("心跳管理器已启动，节点 {}:{}", getHost(), getPort());
+        }
+    }
+
+    public void stopHeartbeatManager(){
+        if(heartbeatManager != null){
+            heartbeatManager.stopHeartbeat();
+            log.info("心跳管理器已停止，节点 {}:{}", getHost(), getPort());
+        }
+    }
+
+    private void handleConnectionLost(){
+        try{
+            if(nodeState.getMasterNode() != null){
+                nodeState.saveConnectionInfo(nodeState.getMasterNode().getNodeId(),
+                        nodeState.getReplicationOffset());
+                log.info("已保存与主节点 {}:{} 的连接信息", getMasterHost(), getMasterPort());
+            }
+            stopHeartbeatManager();
+
+            if(getClientChannel() != null && getClientChannel().isActive()){
+                getClientChannel().close();
+            }
+            log.info("与主节点 {}:{} 的连接已关闭", getMasterHost(), getMasterPort());
+        }catch(Exception e){
+            log.error("处理连接丢失时发生异常: {}", e.getMessage(), e);
+        }
+    }
+
+    public void resetHeartbeatFailedCount(){
+        if(heartbeatManager != null) {
+            heartbeatManager.resetFailedCount();
+            log.debug("已重置心跳失败计数，节点 {}:{}", getHost(), getPort());
+        } else {
+            log.warn("无法重置心跳失败计数，心跳管理器未初始化");
+        }
+    }
+
+    public void pauseHeartbeat(){
+        if(heartbeatManager != null) {
+            heartbeatManager.pasue();
+            log.debug("心跳已暂停，节点 {}:{}", getHost(), getPort());
+        } else {
+            log.warn("无法暂停心跳，心跳管理器未初始化");
+        }
+    }
+
+    public void resumeHeartbeat() {
+        if(heartbeatManager != null) {
+            heartbeatManager.resume();
+            log.debug("心跳已恢复，节点 {}:{}", getHost(), getPort());
+        } else {
+            log.warn("无法恢复心跳，心跳管理器未初始化");
+        }
     }
 
     public void cleanup(){
+        if(heartbeatManager != null) {
+            heartbeatManager.shutdown();
+            heartbeatManager = null;
+        }
         if(group !=null){
             group.shutdownGracefully();
             group = null;

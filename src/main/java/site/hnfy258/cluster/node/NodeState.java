@@ -36,12 +36,21 @@ public class NodeState {
     private final AtomicBoolean readyForReplCommands = new AtomicBoolean(false);
     private volatile ReplBackLog replBackLog;
 
+    private volatile String lastKnownMasterId;
+    private volatile long lastKnownOffset = -1;
+
 
     public NodeState(String nodeId, String host, int port, boolean isMaster) {
         this.nodeId = nodeId;
         this.host = host;
         this.port = port;
         this.isMaster = isMaster;
+
+        if(isMaster){
+            this.replBackLog = new ReplBackLog(nodeId);
+        }else{
+            this.replBackLog = new ReplBackLog();
+        }
     }
 
     public long getReplicationOffset() {
@@ -140,12 +149,23 @@ public class NodeState {
         return readyForReplCommands.get();
     }
 
-    public void resetReplBackLog(){
-        if(replBackLog!=null){
-            replBackLog.reset();
-            log.info("重置复制缓冲区");
-        } else {
-            log.warn("无法重置复制缓冲区，因为它未初始化");
-        }
+
+    public void saveConnectionInfo(String masterId, long offset){
+        this.lastKnownMasterId = masterId;
+        this.lastKnownOffset = offset;
+        log.info("保存连接信息: 主节点ID={}, 偏移量={}", masterId, offset);
+    }
+
+
+
+    public void clearConnectionInfo(){
+        this.lastKnownMasterId = null;
+        this.lastKnownOffset = -1;
+        log.info("清除连接信息");
+    }
+
+    public boolean hasSavedConnectionInfo() {
+        return lastKnownMasterId != null && lastKnownOffset >= 0;
     }
 }
+

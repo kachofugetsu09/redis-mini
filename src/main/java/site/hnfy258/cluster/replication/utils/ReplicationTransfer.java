@@ -101,42 +101,26 @@ public class ReplicationTransfer {
     }
 
     public void sendPartialSyncData(ChannelHandlerContext ctx, byte[] commands, String nodeId) {
-        //1.发送CONTINUE
-        Resp continueResp = new SimpleString("CONTINUE");
 
-        ByteBuf continueBuf = Unpooled.buffer();
         try{
-            continueResp.encode(continueResp,continueBuf);
-            ctx.writeAndFlush(continueBuf).addListener(future -> {
+            ByteBuf combinedBuf = Unpooled.buffer();
+
+            Resp continueResp = new SimpleString("CONTINUE");
+            continueResp.encode(continueResp,combinedBuf);
+
+            if(commands !=null && commands.length > 0) {
+                combinedBuf.writeBytes(commands);
+            }
+
+            ctx.writeAndFlush(combinedBuf).addListener(future -> {
                 if (future.isSuccess()) {
-                    log.info("增量同步响应发送成功: CONTINUE");
-
-                    //2.如果有增量命令直接发送命令数据
-                    if(commands != null && commands.length >0){
-                        Resp commandsResp = new BulkString(commands);
-                        ByteBuf commandsBuf = Unpooled.buffer();
-                        try{
-                            commandsResp.encode(commandsResp, commandsBuf);
-                            ctx.writeAndFlush(commandsBuf).addListener(commandsFuture -> {
-                                if (commandsFuture.isSuccess()) {
-                                    log.info("增量命令数据发送成功，长度: {} bytes", commands.length);
-                                } else {
-                                    log.error("增量命令数据发送失败", commandsFuture.cause());
-                                }
-                            });
-                        } catch (Exception e) {
-                            log.error("增量命令数据编码失败", e);
-                            commandsBuf.release();
-                        }
-                    }
-
+                    log.info("部分同步数据发送成功，节点ID: {}", nodeId);
                 } else {
-                    log.error("增量同步响应发送失败", future.cause());
+                    log.error("部分同步数据发送失败，节点ID: {}", nodeId, future.cause());
                 }
             });
-        }catch(Exception e){
-            log.error("增量同步响应编码失败", e);
-            continueBuf.release();
+        }catch (Exception e){
+            log.error("发送部分同步数据时发生异常，节点ID: {}", nodeId, e);
         }
     }
 }

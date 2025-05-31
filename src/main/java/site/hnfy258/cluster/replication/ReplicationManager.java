@@ -1,5 +1,7 @@
 package site.hnfy258.cluster.replication;
 
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelHandlerContext;
 import lombok.Getter;
 import lombok.Setter;
@@ -34,7 +36,8 @@ public class ReplicationManager {
         }
 
         String remoteAddress = ReplicationUtils.getRemoteAddress(ctx);
-        log.info("开始全量同步，来自: {}", remoteAddress);        try{
+        log.info("开始全量同步，来自: {}", remoteAddress);
+        try{
             //1.生成rdb数据
             byte[] rdbContent = transfer.generateRdbData(redisServer.getRdbManager());
 
@@ -64,7 +67,8 @@ public class ReplicationManager {
         slaveNode.getNodeState().setConnected(true);
         // 1. 符合Redis规范：全量同步后从节点偏移量从0开始
         // 2. RDB文件大小不计入复制偏移量
-        slaveNode.getNodeState().setReplicationOffset(0);
+        long currentOffset = slaveNode.getNodeState().getReplicationOffset();
+        slaveNode.getNodeState().setReplicationOffset(currentOffset);
         slaveNode.getNodeState().setReadyForReplCommands(true);
         log.info("从节点 {} 全量同步后偏移量设为: 0 (RDB文件大小 {} 字节不计入偏移量)", 
                 slaveNode.getNodeId(), length);
@@ -87,14 +91,10 @@ public class ReplicationManager {
             log.error("查找从节点失败", e);
         }
         return null;
-    }    private void updateMasterOffset(int length) {
+    }
+    private void updateMasterOffset(int length) {
         long currentOffset = node.getNodeState().getMasterReplicationOffset();
-        if (currentOffset == 0) {
-            // 1. 符合Redis规范：RDB文件大小不计入复制偏移量
-            // 2. 复制偏移量从0开始，只记录增量命令的字节数
-            node.getNodeState().setMasterReplicationOffset(0);
-            log.info("更新主节点偏移量为: 0 (RDB文件大小 {} 字节不计入偏移量)", length);
-        }
+        log.info("主节点 {} 当前偏移量: {}", node.getNodeId(), currentOffset);
     }
 
     public boolean receiveAndLoadRdb(byte[] rdbData) {
@@ -200,117 +200,61 @@ public class ReplicationManager {
             // 3. 获取复制积压缓冲区
             ReplBackLog replBackLog = node.getNodeState().getReplBackLog();
             if (replBackLog == null) {
-                log.warn("复制积压缓冲区未初始化，创建新的缓冲区");
-                node.getNodeState().resetReplBackLog();
-                replBackLog = node.getNodeState().getReplBackLog();
-                if (replBackLog != null) {
-                    replBackLog.setBaseOffset(prevOffset);
-                    log.info("[主节点] 初始化复制积压缓冲区，基准偏移量: {}", prevOffset);
-                }
-            }            // 4. 更新主节点偏移量（在添加命令到缓冲区之前）
+                log.error("复制缓冲区为null，这不该发生");
+                return;
+            }
             node.getNodeState().setMasterReplicationOffset(newOffset);
             log.info("[主节点] 偏移量: {} -> {} (+{}字节)", prevOffset, newOffset, command.length);
 
-            // 5. 添加命令到复制积压缓冲区
-            if (replBackLog != null) {
-                try {
-                    // 动态同步基准偏移量以确保与从节点偏移量一致
-                    if (replBackLog.getBaseOffset() == 0) {
-                        // 首次设置：使用当前主节点偏移量
-                        replBackLog.setBaseOffset(prevOffset);
-                        log.info("[主节点] 首次设置复制积压缓冲区基准偏移量: {}", prevOffset);
+            if (replBackLog.getBaseOffset() == 0 && prevOffset > 0) {
+                replBackLog.setBaseOffset(prevOffset);
+                log.info("[主节点] 首次设置复制积压缓冲区基准偏移量: {}", prevOffset);
+            }
+
+            try {
+                long backlogOffset = replBackLog.addCommand(command);
+                log.debug("[主节点] 复制积压缓冲区添加命令成功，新的偏移量: {}", backlogOffset);
+            } catch (Exception e) {
+                log.error("[主节点] 添加命令到复制积压缓冲区失败: {}", e.getMessage(), e);
+                return;
+            }
+
+            // 3. 传播命令到所有就绪的从节点
+            int readySlaveCount = 0;
+            int propagatedCount = 0;
+
+            for (RedisNode slave : node.getSlaves()) {
+                // 3.1 检查从节点是否就绪
+                if (isSlaveReady(slave)) {
+                    readySlaveCount++;
+                    // 3.2 检查通道是否可用
+                    if (slave.getChannel() != null && slave.getChannel().isActive()) {
+                        try {
+                            // 3.3 直接发送已编码的RESP字节数组
+                            ByteBuf byteBuf = Unpooled.wrappedBuffer(command);
+                            slave.getChannel().writeAndFlush(byteBuf);
+                            propagatedCount++;
+                            log.info("[主节点] 向从节点 {} 传播命令，偏移量: {}",
+                                    slave.getNodeId(),
+                                    slave.getNodeState().getReplicationOffset());
+                        } catch (Exception e) {
+                            log.error("[主节点] 向从节点 {} 传播命令失败: {}", slave.getNodeId(), e.getMessage());
+                        }
                     } else {
-                        // 检查是否需要更新基准偏移量以适应从节点的实际偏移量
-                        long currentBaseOffset = replBackLog.getBaseOffset();
-                        long maxSlaveOffset = getMaxSlaveOffset();
-
-                        // 如果从节点的最大偏移量超出当前缓冲区范围，需要更新基准偏移量
-                        if (maxSlaveOffset > currentBaseOffset &&
-                                maxSlaveOffset > replBackLog.getBackloghistlen()) {
-                            log.info("[主节点] 检测到从节点最大偏移量 {} 超出缓冲区范围 [{},{}]，更新基准偏移量",
-                                    maxSlaveOffset, currentBaseOffset, replBackLog.getBackloghistlen());
-
-                            // 重置缓冲区并使用从节点的最大偏移量作为新的基准
-                            replBackLog.reset();
-                            replBackLog.setBaseOffset(Math.max(prevOffset, maxSlaveOffset));
-                            log.info("[主节点] 复制积压缓冲区已重置，新基准偏移量: {}", replBackLog.getBaseOffset());
-                        }
+                        log.warn("[主节点] 从节点 {} 通道未就绪，无法传播命令", slave.getNodeId());
                     }
-
-                    // 添加命令到缓冲区
-                    long backlogOffset = replBackLog.addCommand(command);
-                    log.debug("[主节点] 命令已添加到复制积压缓冲区，当前缓冲区偏移量: {}", backlogOffset);
-
-                    // 验证偏移量一致性
-                    if (backlogOffset != newOffset) {
-                        log.error("[主节点] 复制积压缓冲区偏移量 {} 与主节点偏移量 {} 不一致，重置复制积压缓冲区",
-                                backlogOffset, newOffset);
-                        node.getNodeState().resetReplBackLog();
-                        replBackLog = node.getNodeState().getReplBackLog();
-                        if (replBackLog != null) {
-                            replBackLog.setBaseOffset(prevOffset);
-                            replBackLog.addCommand(command);
-                        }
-                    }
-                } catch (Exception e) {
-                    log.error("[主节点] 添加命令到复制积压缓冲区失败: {}", e.getMessage(), e);
-                }
-            } else {
-                log.warn("[主节点] 复制积压缓冲区未初始化，无法记录命令");
-            }
-        }
-
-        // 3. 传播命令到所有就绪的从节点
-        int readySlaveCount = 0;
-        int propagatedCount = 0;
-
-        for (RedisNode slave : node.getSlaves()) {
-            // 3.1 检查从节点是否就绪
-            if (isSlaveReady(slave)) {
-                readySlaveCount++;                // 3.2 检查通道是否可用
-                if (slave.getChannel() != null && slave.getChannel().isActive()) {
-                    try {
-                        // 3.3 直接发送已编码的RESP字节数组
-                        io.netty.buffer.ByteBuf byteBuf = io.netty.buffer.Unpooled.wrappedBuffer(command);
-                        slave.getChannel().writeAndFlush(byteBuf);
-                        propagatedCount++;                        log.info("[主节点] 向从节点 {} 传播命令，偏移量: {}",
-                                slave.getNodeId(),
-                                slave.getNodeState().getReplicationOffset());
-                    } catch (Exception e) {
-                        log.error("[主节点] 向从节点 {} 传播命令失败: {}", slave.getNodeId(), e.getMessage());
-                    }
-                } else {
-                    log.warn("[主节点] 从节点 {} 通道未就绪，无法传播命令", slave.getNodeId());
                 }
             }
-        }        // 4. 记录传播结果
-        if (propagatedCount > 0) {
-            log.info("[主节点] 命令传播完成: {}/{} 个从节点", propagatedCount, readySlaveCount);
-        } else if (readySlaveCount > 0) {
-            log.warn("[主节点] 命令传播失败，未能传播到任何从节点");
+            // 4. 记录传播结果
+            if (propagatedCount > 0) {
+                log.info("[主节点] 命令传播完成: {}/{} 个从节点", propagatedCount, readySlaveCount);
+            } else if (readySlaveCount > 0) {
+                log.warn("[主节点] 命令传播失败，未能传播到任何从节点");
+            }
         }
     }
 
-    private long getMaxSlaveOffset() {
-        long maxOffset = 0L;
 
-        for (RedisNode slave : node.getSlaves()) {
-            if (slave != null && slave.getNodeState() != null) {
-                // 优先使用状态机中的偏移量
-                if (slave.getReplicationStateMachine() != null) {
-                    long slaveOffset = slave.getReplicationStateMachine().getReplicationOffset();
-                    maxOffset = Math.max(maxOffset, slaveOffset);
-                } else {
-                    // 回退到节点状态中的偏移量
-                    long slaveOffset = slave.getNodeState().getReplicationOffset();
-                    maxOffset = Math.max(maxOffset, slaveOffset);
-                }
-            }
-        }
-
-        log.debug("当前从节点最大偏移量: {}", maxOffset);
-        return maxOffset;
-    }
 
     private boolean isSlaveReady(RedisNode slave) {
         return slave.getNodeState().isReadyForReplCommands();

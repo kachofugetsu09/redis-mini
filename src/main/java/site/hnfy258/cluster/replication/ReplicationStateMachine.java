@@ -110,7 +110,7 @@ public class ReplicationStateMachine {
                 return newState == ReplicationState.CONNECTING||newState == ReplicationState.ERROR;
 
             case CONNECTING:
-                return newState == ReplicationState.SYNCING||newState == ReplicationState.DISCONNECTED||newState == ReplicationState.ERROR;
+                return newState == ReplicationState.SYNCING||newState == ReplicationState.DISCONNECTED||newState == ReplicationState.ERROR||newState == ReplicationState.STREAMING;
 
             case SYNCING:
                 return newState == ReplicationState.STREAMING||newState == ReplicationState.DISCONNECTED||newState == ReplicationState.ERROR;
@@ -170,6 +170,12 @@ public class ReplicationStateMachine {
         slaveReplicationOffset.set(0);
         readyForReplCommands.set(false);
         log.info("复制状态机已重置");
+    }
+
+    public void softReset(){
+        currentState.set(ReplicationState.DISCONNECTED);
+        readyForReplCommands.set(false);
+        log.info("复制状态机已软重置");
     }
 
     public StateConsistencyResult validateConsistency() {
@@ -243,7 +249,9 @@ public class ReplicationStateMachine {
                 replOffset,
                 masterOffset
         );
-    }    public long updateReplicationOffset(long commandOffset) {
+    }
+
+    public long updateReplicationOffset(long commandOffset) {
         if(commandOffset < 0) {
             log.warn("尝试更新复制偏移量为负值: {}", commandOffset);
             return replicationOffset.get();
