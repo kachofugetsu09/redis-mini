@@ -134,7 +134,9 @@ Executors.newScheduledThreadPool(2);
             log.error("模拟断线过程中发生错误", e);  
         }  
     }  
-    /**  
+
+
+    /**
      * 模拟从节点重连     */    private static void simulateSlaveReconnection() {  
         try {  
             log.info("正在重连 slave-node1...");  

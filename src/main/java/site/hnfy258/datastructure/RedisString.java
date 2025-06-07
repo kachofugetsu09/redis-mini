@@ -41,10 +41,18 @@ public class RedisString implements RedisData{
         setCommand.add(new BulkString(key.getBytes()));
         setCommand.add(new BulkString(value.getBytes()));
         return Collections.singletonList(new RespArray(setCommand.toArray(new Resp[0])));
+    }    public RedisBytes getValue() {
+        return new RedisBytes(value.getBytes());
     }
 
-    public RedisBytes getValue() {
-        return new RedisBytes(value.getBytes());
+    /**
+     * 获取内部SDS对象的直接引用
+     * 用于高效的字符串操作如append, length等
+     * 
+     * @return SDS对象引用
+     */
+    public Sds getSds() {
+        return value;
     }
 
     public void setSds(Sds sds) {

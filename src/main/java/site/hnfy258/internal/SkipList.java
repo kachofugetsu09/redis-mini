@@ -33,11 +33,11 @@ public class SkipList <T extends Comparable<T>>{
             this.backward = null;
         }
 
-        static class SkipListLevel<T>{
+        static class SkipListLevel{
             SkipListNode forward;
             long span;
 
-            public SkipListLevel(SkipListNode<T> forward, long span) {
+            public SkipListLevel(SkipListNode forward, long span) {
                 this.forward = forward;
                 this.span = span;
             }
@@ -57,11 +57,11 @@ public class SkipList <T extends Comparable<T>>{
         long[] rank = new long[MAX_LEVEL];
         SkipListNode<T> x = head;
         int i;
-
         for(i = level - 1; i >= 0; i--){
+            // 1. 正确初始化rank数组，存储跨越的排名
             rank[i] = i == level - 1 ? 0 : rank[i + 1];
-            getPosition(score,member,x,i,update);
-            update[i] =x;
+            // 2. 使用getPosition方法进行搜索并更新rank数组
+            x = getPosition(score, member, x, i, update, rank);
         }
 
         //算出新的level
@@ -72,18 +72,24 @@ public class SkipList <T extends Comparable<T>>{
                 update[i] = head;
                 update[i].level[i].span = size;
             }
-            level =newLevel;
+            level = newLevel;
         }
 
         //创建新节点
         x = new SkipListNode<>(newLevel,score,member);
 
-        for(i=0;i<newLevel;i++){
+        for(i = 0; i < newLevel; i++){
             x.level[i].forward = update[i].level[i].forward;
             update[i].level[i].forward = x;
 
+            // 3. 正确计算新节点的span
             x.level[i].span = update[i].level[i].span - (rank[0] - rank[i]);
+            // 4. 正确计算前驱节点的span
+            update[i].level[i].span = (rank[0] - rank[i]) + 1;
+        }
 
+        // 5. 对于未触及的层级，增加span（因为插入了新节点）
+        for(i = newLevel; i < level; i++){
             update[i].level[i].span++;
         }
 
@@ -102,15 +108,17 @@ public class SkipList <T extends Comparable<T>>{
     public boolean delete(double score, T member){
         //创建update数组，用以储存该插入的位置
         SkipListNode<T>[] update = new SkipListNode[MAX_LEVEL];
+        long[] rank = new long[MAX_LEVEL];
         SkipListNode<T> x = head;
         int i;
 
         for(i = level - 1; i >= 0; i--){
-            x = getPosition(score,member,x,i,update);
+            // 1. 正确初始化rank数组
+            rank[i] = i == level - 1 ? 0 : rank[i + 1];
+            // 2. 使用修改后的getPosition方法
+            x = getPosition(score, member, x, i, update, rank);
         }
-        x = x.level[0].forward;
-
-        if(x != null && x.score == score && compare(x.member,member)==0){
+        x = x.level[0].forward;        if(x != null && x.score == score && compare(x.member,member)==0){
             skipListDelete(x,update);
             return true;
         }
@@ -122,9 +130,13 @@ public class SkipList <T extends Comparable<T>>{
         int i;
         for(i=0;i<level;i++){
             if(update[i].level[i].forward ==x){
+                // 如果当前层级的前驱节点直接指向要删除的节点
+                // 需要将删除节点的span加到前驱节点，然后减1（因为删除了一个节点）
                 update[i].level[i].span += x.level[i].span - 1;
                 update[i].level[i].forward = x.level[i].forward;
             }else{
+                // 如果当前层级的前驱节点不直接指向要删除的节点
+                // 说明要删除的节点在更低层级，只需要将span减1
                 update[i].level[i].span--;
             }
         }
@@ -150,19 +162,25 @@ public class SkipList <T extends Comparable<T>>{
         }
 
         return level;
-    }
-
-
-    //查找当前节点应该在的位置
-    //1.他的后驱节点不能为空
-    //2.他的后驱节点的分数小于插入的分数
-    //3.如果后驱节点的分数等于当前分数，但是他的member 小于当前插入的member，插入。
-    private SkipListNode<T> getPosition(double score, T member, SkipListNode<T> x, int i, SkipListNode<T>[] update) {
+    }    /**
+     * 查找当前节点应该在的位置，同时更新rank数组
+     * @param score 目标分数
+     * @param member 目标成员
+     * @param x 当前节点
+     * @param i 当前层级
+     * @param update 更新数组
+     * @param rank rank数组，用于记录跨越的排名
+     * @return 找到的位置节点
+     */
+    private SkipListNode<T> getPosition(double score, T member, SkipListNode<T> x, int i, 
+                                       SkipListNode<T>[] update, long[] rank) {
         while(x.level[i].forward != null
         && ((x.level[i].forward.score < score)||(x.level[i].forward.score == score && compare((T)x.level[i].forward.member, member) < 0))){
+            // 累加span到rank中
+            rank[i] += x.level[i].span;
             x = x.level[i].forward;
         }
-        update[i] =x;
+        update[i] = x;
         return x;
     }
 
@@ -250,13 +268,17 @@ public class SkipList <T extends Comparable<T>>{
         long traversed = 0;
 
         for(int i=level-1;i>=0;i--){
-            while(x.level[i].forward != null && traversed+x.level[i].span <= rank){
-                traversed+=x.level[i].span;
-            }
-            if(traversed == rank){
-                return x;
+            while(x.level[i].forward != null && (traversed + x.level[i].span) <= rank){
+                traversed += x.level[i].span;
+                x = x.level[i].forward;
             }
         }
+        
+        // 如果traversed等于rank，说明x就是第rank个节点
+        if(traversed == rank){
+            return x;
+        }
+        
         return null;
     }
 

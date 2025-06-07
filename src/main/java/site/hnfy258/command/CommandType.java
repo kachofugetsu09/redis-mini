@@ -15,8 +15,11 @@ import site.hnfy258.command.impl.list.Lrange;
 import site.hnfy258.command.impl.set.Sadd;
 import site.hnfy258.command.impl.set.Spop;
 import site.hnfy258.command.impl.set.Srem;
+import site.hnfy258.command.impl.string.Append;
 import site.hnfy258.command.impl.string.Get;
+import site.hnfy258.command.impl.string.Getrange;
 import site.hnfy258.command.impl.string.Set;
+import site.hnfy258.command.impl.string.Strlen;
 import site.hnfy258.command.impl.zset.Zadd;
 import site.hnfy258.command.impl.zset.Zrange;
 import site.hnfy258.server.core.RedisCore;
@@ -24,9 +27,11 @@ import site.hnfy258.server.core.RedisCore;
 import java.util.function.Function;
 @Getter
 public enum CommandType {
-    PING(core ->new Ping()),
-    SET(Set::new),
+    PING(core ->new Ping()),    SET(Set::new),
     GET(Get::new),
+    APPEND(Append::new),
+    STRLEN(Strlen::new),
+    GETRANGE(Getrange::new),
     SADD(Sadd::new),
     SPOP(Spop::new),
     SREM(Srem::new),
