@@ -598,6 +598,48 @@ public class AofExtremeCaseTest {
             manager1.close();
             manager2.close();
         }
+    }    /**
+     * 慢速写入器，用于测试背压机制
+     */
+    private static class SlowWriter implements Writer {
+        private final AofWriter realWriter;
+        private final AtomicInteger writeCount = new AtomicInteger(0);
+        
+        public SlowWriter(final File file, final RedisCore redisCore) throws IOException {
+            this.realWriter = new AofWriter(file, true, 0, null, redisCore);
+        }
+        
+        @Override
+        public int write(final ByteBuffer buffer) throws IOException {
+            // 模拟写入延迟（增加延迟，但保持在合理范围内）
+            try {
+                final int count = writeCount.incrementAndGet();
+                // 每10次写入增加额外延迟，模拟突发性能下降
+                if (count % 10 == 0) {
+                    Thread.sleep(40); // 增加到40ms以增加背压可能性
+                } else {
+                    Thread.sleep(15); // 增加到15ms
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return realWriter.write(buffer);
+        }
+        
+        @Override
+        public void flush() throws IOException {
+            realWriter.flush();
+        }
+        
+        @Override
+        public void close() throws IOException {
+            realWriter.close();
+        }
+
+        @Override
+        public boolean bgrewrite() throws IOException {
+            return realWriter.bgrewrite();
+        }
     }
 
     /**
@@ -606,42 +648,11 @@ public class AofExtremeCaseTest {
     @Test
     void testBackpressure() throws Exception {
         log.info("\n=== 开始背压机制测试 ===");
-        PerformanceMetrics metrics = new PerformanceMetrics();
-        File slowFile = new File(tempDir, "slow.aof");
+        final PerformanceMetrics metrics = new PerformanceMetrics();
+        final File slowFile = new File(tempDir, "slow.aof");
+        
         // 创建慢速写入器
-        final Writer slowWriter = new Writer() {
-            private final AofWriter realWriter = new AofWriter(slowFile, true, 0, null,redisCore);
-            private final AtomicInteger writeCount = new AtomicInteger(0);
-            @Override
-            public int write(ByteBuffer buffer) throws IOException {
-                // 模拟写入延迟（增加延迟，但保持在合理范围内）
-                try {
-                    int count = writeCount.incrementAndGet();
-                    // 每10次写入增加额外延迟，模拟突发性能下降
-                    if (count % 10 == 0) {
-                        Thread.sleep(40); // 增加到40ms以增加背压可能性
-                    } else {
-                        Thread.sleep(15); // 增加到15ms
-                    }
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-                return realWriter.write(buffer);
-            }
-            @Override
-            public void flush() throws IOException {
-                realWriter.flush();
-            }
-            @Override
-            public void close() throws IOException {
-                realWriter.close();
-            }
-
-            @Override
-            public boolean bgrewrite() throws IOException {
-                return realWriter.bgrewrite();
-            }
-        };
+        final SlowWriter slowWriter = new SlowWriter(slowFile, redisCore);
         // 使用较小的批处理缓冲区，更容易触发背压
         final AofBatchWriter batchWriter = new AofBatchWriter(slowWriter, 500); // 原为1000
         ExecutorService executor = Executors.newFixedThreadPool(8); // 增加线程数

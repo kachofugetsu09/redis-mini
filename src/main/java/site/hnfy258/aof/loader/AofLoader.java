@@ -26,22 +26,31 @@ public class AofLoader {
     private RandomAccessFile raf;
     private static final int BUFFER_SIZE = 4096;
 
-    private static final byte[] REDIS_PREFIX = {'*', '$', '+', '-', ':'};
-
-    public AofLoader(String fileName, RedisCore redisCore) throws Exception {
+    private static final byte[] REDIS_PREFIX = {'*', '$', '+', '-', ':'};    public AofLoader(final String fileName, final RedisCore redisCore) throws Exception {
         this.fileName = fileName;
         this.redisCore = redisCore;
-       openFile();
+        openFile();
     }
 
+    /**
+     * 安全打开文件
+     */
     public void openFile() throws IOException {
-        File file = new File(fileName);
-        if(!file.exists() || file.length() ==0){
-            log.info("aof文件不存在");
+        final File file = new File(fileName);
+        if (!file.exists() || file.length() == 0) {
+            log.info("AOF文件不存在或为空: {}", fileName);
             return;
         }
-        this.raf = new RandomAccessFile(file, "r");
-        this.channel = raf.getChannel();
+        
+        try {
+            this.raf = new RandomAccessFile(file, "r");
+            this.channel = raf.getChannel();
+            log.info("AOF文件打开成功: {}, 文件大小: {} bytes", fileName, channel.size());
+        } catch (IOException e) {
+            // 如果打开失败，确保资源被清理
+            closeFile();
+            throw new IOException("打开AOF文件失败: " + fileName, e);
+        }
     }
 
     public void load(){
@@ -85,13 +94,17 @@ public class AofLoader {
     }
 
     private void handleCommandError(ByteBuf commands, int position, Exception e) {
-        log.warn("命令执行错误，在{}",position,e.getMessage());
+        if (!commands.isReadable()) {
+            return;
+        }
+        
+        log.warn("命令执行错误，在{}", position);
         commands.resetReaderIndex();
 
-        while(commands.isReadable()){
+        while(commands.isReadable()) {
             byte b = commands.readByte();
-            if(isRespPrefix(b)){
-                commands.readerIndex(commands.readerIndex() -1);
+            if(isRespPrefix(b)) {
+                commands.readerIndex(commands.readerIndex() - 1);
                 break;
             }
         }
@@ -115,25 +128,25 @@ public class AofLoader {
             return false;
         }
         return executeRedisCommand(command,position);
-    }
+    }    private boolean executeRedisCommand(final RespArray command, final int position) {
+        try {
+            final String commandName = ((BulkString) command.getContent()[0])
+                    .getContent().getString().toUpperCase();
+            final CommandType commandType;
 
-    private boolean executeRedisCommand(RespArray command,int position) {
-        try{
-            String commandName = ((BulkString) command.getContent()[0]).getContent().getString().toUpperCase();
-            CommandType commandType;
-
-            try{
+            try {
                 commandType = CommandType.valueOf(commandName);
-            }catch (IllegalArgumentException e){
+            } catch (IllegalArgumentException e) {
+                log.warn("未知命令类型: {} 在位置: {}", commandName, position);
                 return false;
             }
 
-            Command cmd = commandType.getSupplier().apply(redisCore);
+            final Command cmd = commandType.getSupplier().apply(redisCore);
             cmd.setContext(command.getContent());
-            Resp result = cmd.handle();
+            cmd.handle();  // 执行命令，不需要保存结果
             return true;
-        }catch(Exception e){
-            log.error("命令执行失败，在{}",position,e);
+        } catch (Exception e) {
+            log.error("命令执行失败，在{}", position, e);
         }
         return false;
     }
@@ -199,20 +212,46 @@ public class AofLoader {
             composite.release();
             throw new RuntimeException(e);
         }
-    }
-
-    public void closeFile(){
-        try{
-            if(channel != null) channel.close();
-            if(raf != null) raf.close();
-        }catch(IOException e){
-            log.error("关闭AOF文件时发生错误",e);
+    }    /**
+     * 安全关闭文件资源
+     */
+    public void closeFile() {
+        try {
+            if (channel != null) {
+                try {
+                    if (channel.isOpen()) {
+                        channel.close();
+                    }
+                } catch (IOException e) {
+                    log.warn("关闭FileChannel时发生错误: {}", e.getMessage());
+                } finally {
+                    channel = null;
+                }
+            }
+            
+            if (raf != null) {
+                try {
+                    raf.close();
+                } catch (IOException e) {
+                    log.warn("关闭RandomAccessFile时发生错误: {}", e.getMessage());
+                } finally {
+                    raf = null;
+                }
+            }
+            
+            log.debug("AOF文件资源已安全关闭");
+            
+        } catch (Exception e) {
+            log.error("关闭AOF文件时发生意外错误: {}", e.getMessage());
         }
     }
 
-
-    public void close(){
+    /**
+     * 关闭加载器
+     */
+    public void close() {
         closeFile();
+        log.info("AofLoader 已关闭");
     }
 
 }

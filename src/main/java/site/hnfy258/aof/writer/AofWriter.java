@@ -153,36 +153,42 @@ public class AofWriter implements Writer{
     @Override
     public void flush() throws IOException {
         channel.force(true);
-    }
-
-    @Override
+    }    @Override
     public void close() throws IOException {
-       try{
-           if(channel !=null && channel.isOpen()){
-               log.info("执行关闭前最后一次刷盘");
-               flush();
-               long currentSize = realSize.get();
-               if(currentSize > 0){
-                   channel.truncate(realSize.get());
-                   log.info("AOF文件已截断到长度{}",realSize.get());
-               }
-           }
-           channel.close();
-           if(channel !=null){
-               channel =null;
-           }
-           if(raf != null) {
-               raf.close();
-                raf = null;
-           }
-
-           System.gc();
-           Thread.sleep(1000);
-       }catch(IOException e){
-           log.error("关闭AOF文件时发生错误",e);
-       }catch (InterruptedException e){
-           log.error("关闭AOF文件时发生错误",e);
-       }
+        try {
+            // 1. 等待重写任务完成
+            if (rewriting.get()) {
+                log.info("等待AOF重写任务完成...");
+                int waitCount = 0;
+                while (rewriting.get() && waitCount < 100) {
+                    Thread.sleep(100);
+                    waitCount++;
+                }
+                if (rewriting.get()) {
+                    log.warn("AOF重写任务未在10秒内完成，强制关闭");
+                }
+            }
+            
+            // 2. 清理重写缓冲区
+            if (rewriteBufferQueue != null) {
+                rewriteBufferQueue.clear();
+            }
+            
+            // 3. 关闭文件资源
+            closeFileResources(this.channel, this.raf);
+            this.channel = null;
+            this.raf = null;
+            
+            log.info("AOF Writer 已成功关闭");
+            
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.error("关闭AOF文件时被中断", e);
+            throw new IOException("关闭AOF文件时被中断", e);
+        } catch (Exception e) {
+            log.error("关闭AOF文件时发生错误", e);
+            throw new IOException("关闭AOF文件时发生错误", e);
+        }
     }
 
     @Override
@@ -195,101 +201,208 @@ public class AofWriter implements Writer{
         Thread rewriteThread = new Thread(this::rewriteTask);
         rewriteThread.start();
         return true;
-    }
-
-    private void rewriteTask() {
-        try{
+    }    private void rewriteTask() {
+        File rewriteFile = null;
+        RandomAccessFile rewriteRaf = null;
+        FileChannel rewriteChannel = null;
+        
+        try {
             log.info("开始重写aof");
-            File rewriteFile = File.createTempFile("redis_aof_temp",".aof",file.getParentFile());
-            FileChannel rewriteChannel = new RandomAccessFile(rewriteFile,"rw").getChannel();
+            // 1. 创建临时文件和FileChannel
+            rewriteFile = File.createTempFile("redis_aof_temp", ".aof", file.getParentFile());
+            rewriteRaf = new RandomAccessFile(rewriteFile, "rw");
+            rewriteChannel = rewriteRaf.getChannel();
             rewriteChannel.position(0);
-            //1.先进行数据库的重写
-            RedisDB[] dataBases = redisCore.getDataBases();
-            for(int i=0; i<dataBases.length; i++){
-                RedisDB db = dataBases[i];
-                if(db.size()>0){
-                    log.info("正在重写数据库{}",i);
-                    writeSelectCommand(i,rewriteChannel);
-                    writeDatabaseToAof(db,rewriteChannel);
+            
+            // 2. 进行数据库的重写
+            final RedisDB[] dataBases = redisCore.getDataBases();
+            for (int i = 0; i < dataBases.length; i++) {
+                final RedisDB db = dataBases[i];
+                if (db.size() > 0) {
+                    log.info("正在重写数据库{}", i);
+                    writeSelectCommand(i, rewriteChannel);
+                    writeDatabaseToAof(db, rewriteChannel);
                 }
             }
+            
+            // 3. 应用重写缓冲区
             log.info("开始缓冲区的重写");
-            applyRewriteBuffer(rewriteFile);
+            applyRewriteBuffer(rewriteChannel);
+            
+            // 4. 强制刷盘并关闭临时文件
             rewriteChannel.force(true);
-            rewriteChannel.close();
-
+            closeRewriteResources(rewriteChannel, rewriteRaf);
+            rewriteChannel = null;
+            rewriteRaf = null;
+            
+            // 5. 替换原文件
             replaceAofFile(rewriteFile);
             log.info("重写AOF文件完成");
-        }catch(IOException e) {
+            
+        } catch (IOException e) {
             log.error("重写AOF文件时发生错误", e);
-        }
-        finally {
+            // 删除临时文件
+            if (rewriteFile != null && rewriteFile.exists()) {
+                try {
+                    Files.delete(rewriteFile.toPath());
+                    log.info("已删除临时重写文件: {}", rewriteFile.getAbsolutePath());
+                } catch (IOException deleteEx) {
+                    log.warn("删除临时重写文件失败: {}", deleteEx.getMessage());
+                }
+            }
+        } finally {
+            // 6. 确保资源释放
+            closeRewriteResources(rewriteChannel, rewriteRaf);
             rewriteBufferQueue.clear();
             rewriting.compareAndSet(true, false);
         }
     }
-
-    private void replaceAofFile(File rewriteFile) {
-        try{
-            //关闭当前文件通道
-            if(channel != null){
-                channel.close();
+    
+    /**
+     * 安全关闭重写相关资源
+     */
+    private void closeRewriteResources(final FileChannel rewriteChannel, 
+                                     final RandomAccessFile rewriteRaf) {
+        if (rewriteChannel != null) {
+            try {
+                rewriteChannel.close();
+            } catch (IOException e) {
+                log.warn("关闭重写FileChannel时发生错误: {}", e.getMessage());
             }
-            if(raf != null){
-                raf.close();
+        }
+        
+        if (rewriteRaf != null) {
+            try {
+                rewriteRaf.close();
+            } catch (IOException e) {
+                log.warn("关闭重写RandomAccessFile时发生错误: {}", e.getMessage());
             }
+        }
+    }    private void replaceAofFile(final File rewriteFile) {
+        RandomAccessFile oldRaf = null;
+        FileChannel oldChannel = null;
+        
+        try {
+            // 1. 保存当前资源引用
+            oldRaf = this.raf;
+            oldChannel = this.channel;
+            
+            // 2. 先设置为null，避免close方法中重复关闭
+            this.raf = null;
+            this.channel = null;
+            
+            // 3. 关闭当前文件通道
+            closeFileResources(oldChannel, oldRaf);
+            
             File backupFile = null;
-
-            try{
-                //1.创建备份
-                backupFile = FileUtils.createBackupFile(file,".bak");
-                if(backupFile != null){
-                    log.info("创建备份文件{}",backupFile.getAbsolutePath());
+            try {
+                // 4. 创建备份
+                backupFile = FileUtils.createBackupFile(file, ".bak");
+                if (backupFile != null) {
+                    log.info("创建备份文件{}", backupFile.getAbsolutePath());
                 }
-                //2.将重写的新文件移动到原文件位置
-                FileUtils.safeRenameFile(rewriteFile,file);
+                
+                // 5. 将重写的新文件移动到原文件位置
+                FileUtils.safeRenameFile(rewriteFile, file);
                 log.info("重写AOF文件完成，替换原文件");
-                //3.成功后删除备份
-                if(backupFile != null && backupFile.exists()){
+                
+                // 6. 成功后删除备份
+                if (backupFile != null && backupFile.exists()) {
                     Files.delete(backupFile.toPath());
+                    log.info("已删除备份文件: {}", backupFile.getAbsolutePath());
                 }
-            }catch(Exception e){
+                
+            } catch (Exception e) {
                 log.error("重命名文件时发生错误", e);
-                if(!file.exists()&& backupFile != null && backupFile.exists()){
-                    try{
-                        FileUtils.safeRenameFile(backupFile,file);
-                        log.info("重命名文件失败，恢复备份文件");
-                    }catch(Exception ex){
+                
+                // 7. 失败时恢复备份
+                if (!file.exists() && backupFile != null && backupFile.exists()) {
+                    try {
+                        FileUtils.safeRenameFile(backupFile, file);
+                        log.info("重命名文件失败，已恢复备份文件");
+                    } catch (Exception ex) {
                         log.error("恢复备份文件时发生错误", ex);
+                        throw new RuntimeException("文件替换失败且无法恢复备份", ex);
                     }
                 }
             }
-            this.raf = new RandomAccessFile(file,"rw");
-            this.channel = raf.getChannel();
-            this.channel.position(realSize.get());
-            log.info("重写AOF文件完成，替换原文件");
-        }catch(IOException e){
-            log.error("重命名文件时发生错误", e);
+            
+            // 8. 重新打开文件
+            reopenFile();
+            log.info("文件重新打开完成，当前位置: {}", this.channel.position());
+            
+        } catch (IOException e) {
+            log.error("替换AOF文件时发生错误", e);
+            // 如果重新打开失败，尝试恢复
+            try {
+                reopenFile();
+            } catch (IOException reopenEx) {
+                log.error("重新打开文件失败", reopenEx);
+                throw new RuntimeException("AOF文件替换失败且无法重新打开", reopenEx);
+            }
         }
     }
-
-    private void applyRewriteBuffer(File rewriteFile) {
+      /**
+     * 安全关闭文件资源
+     */
+    private void closeFileResources(final FileChannel fileChannel, 
+                                  final RandomAccessFile randomAccessFile) {
+        if (fileChannel != null && fileChannel.isOpen()) {
+            try {
+                // 1. 执行关闭前最后一次刷盘
+                log.info("执行关闭前最后一次刷盘");
+                fileChannel.force(true);
+                
+                // 2. 截断文件到实际大小
+                final long currentSize = realSize.get();
+                if (currentSize > 0) {
+                    fileChannel.truncate(currentSize);
+                    log.info("AOF文件已截断到长度{}", currentSize);
+                }
+                
+                // 3. 关闭FileChannel
+                fileChannel.close();
+                
+            } catch (IOException e) {
+                log.warn("关闭FileChannel时发生错误: {}", e.getMessage());
+            }
+        }
+        
+        if (randomAccessFile != null) {
+            try {
+                randomAccessFile.close();
+            } catch (IOException e) {
+                log.warn("关闭RandomAccessFile时发生错误: {}", e.getMessage());
+            }
+        }
+    }
+    
+    /**
+     * 重新打开文件
+     */
+    private void reopenFile() throws IOException {
+        this.raf = new RandomAccessFile(file, "rw");
+        this.channel = raf.getChannel();
+        this.channel.position(realSize.get());
+    }private void applyRewriteBuffer(final FileChannel rewriteChannel) {
         int appliedCommands = 0;
         int totalBytes = 0;
-        try{
-            int batchSize = 1000;
-            List<ByteBuffer> buffers = new ArrayList<>(batchSize);
+        
+        try {
+            final int batchSize = 1000;
+            final List<ByteBuffer> buffers = new ArrayList<>(batchSize);
 
-            while(rewriteBufferQueue.drainTo(buffers,batchSize)>0){
-                for(ByteBuffer buffer: buffers){
-                    int written = writtenFullyTo(channel,buffer);
+            while (rewriteBufferQueue.drainTo(buffers, batchSize) > 0) {
+                for (final ByteBuffer buffer : buffers) {
+                    final int written = writtenFullyTo(rewriteChannel, buffer);
                     totalBytes += written;
                     appliedCommands++;
                 }
                 buffers.clear();
             }
-            log.info("重写AOF文件的缓冲区已应用，应用了{}条命令",appliedCommands);
-        }catch(Exception e) {
+            log.info("重写AOF文件的缓冲区已应用，应用了{}条命令，总字节数: {}", 
+                    appliedCommands, totalBytes);
+        } catch (Exception e) {
             log.error("重写AOF文件的缓冲区应用时发生错误", e);
         }
     }

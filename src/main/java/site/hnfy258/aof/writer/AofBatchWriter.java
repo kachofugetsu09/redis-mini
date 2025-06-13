@@ -205,41 +205,91 @@ public class AofBatchWriter {
                 throw new IOException("刷盘超时，队列中还有"+writeQueue.size()+"个数据未写入");
             }
         }
-    }
-
-    public void close() throws Exception {
-        if (flushScheduler != null) {
-            try {
-                flushScheduler.shutdown();
+    }    public void close() throws Exception {
+        log.info("开始关闭 AofBatchWriter...");
+        
+        try {
+            // 1. 停止接收新的写入请求
+            running.set(false);
+              // 2. 等待写入线程完成处理
+            if (writeThread != null && writeThread.isAlive()) {
+                writeThread.interrupt();
                 try {
-                    flushScheduler.shutdownNow();
-                    boolean terminated = flushScheduler.awaitTermination(3, TimeUnit.SECONDS);
+                    writeThread.join(3000);
+                    if (writeThread.isAlive()) {
+                        log.warn("写入线程未在3秒内终止");
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    log.warn("等待写入线程终止时被中断");
+                }
+            }
+            
+            // 3. 关闭刷盘调度器
+            if (flushScheduler != null) {
+                try {
+                    flushScheduler.shutdown();
+                    final boolean terminated = flushScheduler.awaitTermination(3, TimeUnit.SECONDS);
                     if (!terminated) {
-                        log.warn("刷盘调度超时");
+                        log.warn("刷盘调度器未在3秒内终止，强制关闭");
+                        flushScheduler.shutdownNow();
                     }
                 } catch (InterruptedException e) {
                     flushScheduler.shutdownNow();
                     Thread.currentThread().interrupt();
-                    log.warn("刷盘调度被中断");
+                    log.warn("刷盘调度器关闭过程被中断");
                 }
-            } catch (Exception e) {
-                log.error("关闭刷盘调度器时发生错误", e);
             }
+            
+            // 4. 清理队列中剩余的ByteBuf，避免内存泄漏
+            cleanupWriteQueue();
+            
+            // 5. 执行最后的刷盘
             try {
-                flush();
+                if (writer != null) {
+                    writer.flush();
+                    log.info("执行最后的刷盘完成");
+                }
             } catch (Exception e) {
-                log.error("关闭刷盘调度器时发生错误", e);
+                log.error("最后刷盘时发生错误", e);
             }
-            running.set(false);
-
-            if (writeThread != null && writeThread.isAlive()) {
-                writeThread.interrupt();
+            
+            log.info("AofBatchWriter 关闭完成");
+            
+        } catch (Exception e) {
+            log.error("关闭 AofBatchWriter 时发生错误", e);
+            throw e;
+        }
+    }
+    
+    /**
+     * 清理写入队列中的ByteBuf资源
+     */
+    private void cleanupWriteQueue() {
+        int releasedCount = 0;
+        
+        try {
+            ByteBuf byteBuf;
+            while ((byteBuf = writeQueue.poll()) != null) {
                 try {
-                    writeThread.join(1000);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
+                    if (byteBuf.refCnt() > 0) {
+                        byteBuf.release();
+                        releasedCount++;
+                    }
+                } catch (Exception e) {
+                    log.warn("释放队列中的ByteBuf时发生错误: {}", e.getMessage());
                 }
             }
+            
+            if (releasedCount > 0) {
+                log.info("已释放队列中的 {} 个 ByteBuf 资源", releasedCount);
+            }
+            
+            // 重置pending字节计数
+            pendingBytes.set(0);
+            
+        } catch (Exception e) {
+            log.error("清理写入队列时发生错误", e);
         }
     }
 
