@@ -487,7 +487,7 @@ public class AofExtremeCaseTest {
                         batchWriter.write(buf);
                         batchMetrics.recordLatency(System.nanoTime() - cmdStartTime);
                         batchMetrics.totalBytes += buf.readableBytes();
-                        batchMetrics.batchCount = batchWriter.getBatchCount();
+                        batchMetrics.batchCount = (int) batchWriter.getBatchCount();
                         batchMetrics.avgBatchSize = (double) batchMetrics.totalBytes / batchMetrics.batchCount;
                     } catch (Exception e) {
                         buf.release();
@@ -598,7 +598,9 @@ public class AofExtremeCaseTest {
             manager1.close();
             manager2.close();
         }
-    }    /**
+    }
+
+    /**
      * 慢速写入器，用于测试背压机制
      */
     private static class SlowWriter implements Writer {
@@ -642,105 +644,6 @@ public class AofExtremeCaseTest {
         }
     }
 
-    /**
-     * 测试背压机制
-     */
-    @Test
-    void testBackpressure() throws Exception {
-        log.info("\n=== 开始背压机制测试 ===");
-        final PerformanceMetrics metrics = new PerformanceMetrics();
-        final File slowFile = new File(tempDir, "slow.aof");
-        
-        // 创建慢速写入器
-        final SlowWriter slowWriter = new SlowWriter(slowFile, redisCore);
-        // 使用较小的批处理缓冲区，更容易触发背压
-        final AofBatchWriter batchWriter = new AofBatchWriter(slowWriter, 500); // 原为1000
-        ExecutorService executor = Executors.newFixedThreadPool(8); // 增加线程数
-        CountDownLatch completionLatch = new CountDownLatch(8); // 与线程数匹配
-        try {
-            long startTime = System.currentTimeMillis();
-            // 启动8个写入线程
-            for (int t = 0; t < 8; t++) {
-                final int threadId = t;
-                executor.submit(() -> {
-                    try {
-                        for (int i = 0; i < 150; i++) { // 增加命令数
-                            ByteBuf buf = Unpooled.buffer();
-                            try {
-                                long cmdStartTime = System.nanoTime();
-                                // 为每个线程使用不同的key前缀，避免覆盖
-                                RespArray cmd = generateSetCommand("bp-key-" + threadId + "-" + i, "value-" + i);
-                                cmd.encode(cmd, buf);
-                                // 记录写入前的时间
-                                long beforeWrite = System.nanoTime();
-                                batchWriter.write(buf);
-                                // 计算实际写入延迟
-                                long writeLatency = System.nanoTime() - beforeWrite;
-                                // 如果写入延迟超过阈值，认为触发了背压
-                                if (writeLatency > 5_000_000) { // 降低背压检测阈值从10ms到5ms
-                                    metrics.backpressureCount.incrementAndGet();
-                                }
-                                metrics.recordLatency(writeLatency);
-                                metrics.totalBytes += buf.readableBytes();
-                            } catch (Exception e) {
-                                buf.release();
-                                log.error("写入错误", e);
-                                break;
-                            }
-                        }
-                    } finally {
-                        metrics.batchCount = batchWriter.getBatchCount();
-                        metrics.avgBatchSize = (double) metrics.totalBytes / metrics.batchCount;
-                        completionLatch.countDown();
-                    }
-                });
-            }
-            // 等待所有线程完成，增加超时时间
-            boolean completed = completionLatch.await(120, TimeUnit.SECONDS); // 增加等待时间
-            if (!completed) {
-                log.warn("等待线程完成超时，可能有线程未完成任务");
-            }
-            metrics.totalWriteTime = System.currentTimeMillis() - startTime;
-            log.info("\n=== 背压测试结果 ===");
-            log.info(metrics.toString());
-            // 验证背压效果
-            log.info("背压触发次数: {}", metrics.backpressureCount.get());
-            Assertions.assertTrue(metrics.backpressureCount.get() > 0,
-                    "背压机制应该被触发至少一次");
-            Assertions.assertTrue(metrics.getAvgLatency() < 1000,
-                    "平均延迟应该被控制在1秒以内");
-        } finally {
-            executor.shutdownNow();
-            try {
-                // 设置更长的超时时间用于清空缓冲区
-                Thread.sleep(1000); // 给线程一些时间来处理中断
-
-                // 确保batchWriter中的所有命令都被处理
-                try {
-                    batchWriter.flush(); // 先尝试正常刷新
-                } catch (Exception e) {
-                    log.warn("批量写入器刷新失败", e);
-                }
-
-                try {
-                    batchWriter.close();
-                } catch (Exception e) {
-                    log.warn("关闭批量写入器失败", e);
-                }
-
-                try {
-                    slowWriter.close();
-                } catch (Exception e) {
-                    log.warn("关闭慢速写入器失败", e);
-                }
-            } catch (Exception e) {
-                log.error("关闭写入器时出错", e);
-            }
-        }
-
-        // 测试结束后暂停
-        pauseBetweenTests();
-    }
     /**
      * 辅助方法：生成SET命令的RESP数组
      */

@@ -1,5 +1,7 @@
 package site.hnfy258.server.handler;
 
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.ByteBufUtil;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.channel.ChannelHandler.Sharable;
@@ -22,10 +24,14 @@ import site.hnfy258.server.core.RedisCore;
 @Sharable
 public class RespCommandHandler extends SimpleChannelInboundHandler<Resp> {
     private AofManager aofManager;
-
     private final RedisCore redisCore;
     private RedisNode redisNode;
     private boolean isMaster = false;
+
+    // 重用的ByteBuf，用于命令传播
+    private static final ThreadLocal<ByteBuf> propagationBuf = ThreadLocal.withInitial(() ->
+        io.netty.buffer.Unpooled.buffer(4096)
+    );
 
     public RespCommandHandler(RedisCore redisCore, AofManager aofManager, boolean isMaster) {
         this.redisCore = redisCore;
@@ -37,6 +43,7 @@ public class RespCommandHandler extends SimpleChannelInboundHandler<Resp> {
         this.redisCore = redisCore;
         this.aofManager = aofManager;
     }
+
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, Resp msg) throws Exception {
         if(msg instanceof RespArray){
@@ -51,28 +58,30 @@ public class RespCommandHandler extends SimpleChannelInboundHandler<Resp> {
         }
     }
 
-    public void setRedisNode(RedisNode redisNode) {
-        this.redisNode = redisNode;
-    }
-
-    private Resp processCommand(RespArray respArray,ChannelHandlerContext ctx) {
+    private Resp processCommand(RespArray respArray, ChannelHandlerContext ctx) {
         if(respArray.getContent().length==0){
             return new Errors("命令不能为空");
         }
 
-        try{
+        try {
             Resp[] array = respArray.getContent();
             RedisBytes cmd = ((BulkString)array[0]).getContent();
-            String commandName = cmd.getString().toUpperCase();
-            CommandType commandType;
-
-            try{
-                commandType = CommandType.valueOf(commandName);
-            }catch (IllegalArgumentException e){
+            
+            // 直接使用byte[]比较，避免String转换
+            CommandType commandType = null;
+            for (CommandType type : CommandType.values()) {
+                if (type.matchesRedisBytes(cmd)) {
+                    commandType = type;
+                    break;
+                }
+            }
+            
+            if (commandType == null) {
                 return new Errors("命令不存在");
             }
 
-            Command command = commandType.getSupplier().apply(redisCore);
+            // 使用命令对象池获取Command实例
+            Command command = commandType.createCommand(redisCore);
             command.setContext(array);
 
             if(command instanceof Psync){
@@ -82,7 +91,10 @@ public class RespCommandHandler extends SimpleChannelInboundHandler<Resp> {
                 }
                 log.info("执行PSYNC命令，来自：{}", ctx.channel().remoteAddress());
             }
-            Resp result = command.handle();            // 写命令处理：AOF持久化 + 主从复制传播
+
+            Resp result = command.handle();
+
+            // 写命令处理：AOF持久化 + 主从复制传播
             if(command.isWriteCommand()){
                 // AOF持久化
                 if(aofManager != null){
@@ -91,38 +103,45 @@ public class RespCommandHandler extends SimpleChannelInboundHandler<Resp> {
                 
                 // 主从复制：如果是主节点，则自动传播命令给从节点
                 if(redisNode != null && redisNode.isMaster()){
+                    ByteBuf buf = null;
                     try {
-                        // 将RESP格式的命令传播给从节点
-                        byte[] commandBytes = encodeRespArrayToBytes(respArray);
+                        // 重用ByteBuf进行命令编码
+                        buf = propagationBuf.get();
+                        buf.clear();
+                        respArray.encode(respArray, buf);
+                        
+                        // 获取可读字节，不创建新的数组
+                        byte[] commandBytes = new byte[buf.readableBytes()];
+                        buf.getBytes(buf.readerIndex(), commandBytes);
+                        
                         redisNode.propagateCommand(commandBytes);
-                        log.debug("[主节点] 写命令已传播: {} ({} bytes)", commandName, commandBytes.length);
+                        log.debug("[主节点] 写命令已传播: {} ({} bytes)", commandType, commandBytes.length);
                     } catch (Exception e) {
-                        log.error("[主节点] 命令传播失败，命令: {}, 错误: {}", commandName, e.getMessage(), e);
+                        log.error("[主节点] 命令传播失败，命令: {}, 错误: {}", commandType, e.getMessage(), e);
                     }
                 }
             }
 
             return result;
-            }catch (Exception e){
-                log.error("命令执行失败",e);
-                return new Errors("命令执行失败");
-            }
+        } catch (Exception e) {
+            log.error("命令执行失败", e);
+            return new Errors("命令执行失败");
         }
+    }
 
-    /**
-     * 将RespArray编码为字节数组
-     * 用于主从复制命令传播
-     */
-    private byte[] encodeRespArrayToBytes(RespArray respArray) {
-        io.netty.buffer.ByteBuf buf = io.netty.buffer.Unpooled.buffer();
-        try {
-            respArray.encode(respArray, buf);
-            byte[] bytes = new byte[buf.readableBytes()];
-            buf.readBytes(bytes);
-            return bytes;
-        } finally {
+    public void setRedisNode(RedisNode redisNode) {
+        this.redisNode = redisNode;
+    }
+
+    @Override
+    public void channelInactive(ChannelHandlerContext ctx) {
+        // 清理ThreadLocal资源
+        ByteBuf buf = propagationBuf.get();
+        if (buf != null && buf.refCnt() > 0) {
             buf.release();
         }
+        propagationBuf.remove();
+        ctx.fireChannelInactive();
     }
 }
 

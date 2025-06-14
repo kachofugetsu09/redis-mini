@@ -81,7 +81,7 @@ public class AofManager {
      * 按照正确的顺序关闭各个组件，确保资源完全释放
      */
     public void close() throws Exception {
-        log.info("开始关闭AOF管理器...");
+        log.debug("开始关闭AOF管理器...");
         
         Exception firstException = null;
         try {

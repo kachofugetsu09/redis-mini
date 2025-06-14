@@ -7,7 +7,6 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 @Slf4j
@@ -18,19 +17,10 @@ public class AofBatchWriter {
     private final ScheduledExecutorService flushScheduler;
     private final AtomicBoolean forceFlush = new AtomicBoolean(false);
     private final int flushInterval;
-
-    //队列
-    private static final int DEFAULT_QUEUQ_SIZE = 1000;
+    private static final int DEFAULT_QUEUE_SIZE = 1000;
     private final BlockingQueue<ByteBuf> writeQueue;
     private final Thread writeThread;
-    private final AtomicBoolean running = new AtomicBoolean(true);
-
-
-    //背压阈值
-    private static final int DEFAULT_BACKPRESSURE_THRESHOLD = 6*1024*1024;
-    private final AtomicInteger pendingBytes = new AtomicInteger(0);
-
-    //批处理参数
+    private final AtomicBoolean running = new AtomicBoolean(true);    //批处理参数
     public static final int MIN_BATCH_SIZE = 16;
     public static final int MAX_BATCH_SIZE = 50;
 
@@ -39,6 +29,11 @@ public class AofBatchWriter {
 
     //大命令的参数
     private static final int LARGE_COMMAND_THRESHOLD = 512*1024;
+    
+    // 刷盘超时配置
+    private static final long DEFAULT_FLUSH_TIMEOUT_MS = 500; // 默认500ms
+    private static final long FAST_FLUSH_TIMEOUT_MS = 200;    // 快速模式200ms  
+    private static final long SLOW_FLUSH_TIMEOUT_MS = 1000;   // 慢速模式1秒
 
 
     private AtomicLong batchCount = new AtomicLong(0);
@@ -50,7 +45,7 @@ public class AofBatchWriter {
 
 
 
-        this.writeQueue = new LinkedBlockingDeque<>(DEFAULT_QUEUQ_SIZE);
+        this.writeQueue = new LinkedBlockingDeque<>(DEFAULT_QUEUE_SIZE);
         this.writeThread = new Thread(this::processWriteQueue);
         this.writeThread.setName("AOF-Writer-Thread");
         this.writeThread.setDaemon(true);
@@ -63,16 +58,16 @@ public class AofBatchWriter {
             return thread;
         });
 
-        if(flushInterval > 0){
-            this.flushScheduler.scheduleAtFixedRate(()->{
-                try{
-                    if(forceFlush.compareAndSet(true, false)){
+        if (flushInterval > 0) {
+            this.flushScheduler.scheduleAtFixedRate(() -> {
+                try {
+                    if (forceFlush.compareAndSet(true, false)) {
                         writer.flush();
                     }
-                }catch(Exception e){
+                } catch (Exception e) {
                     log.error("Failed to flush AOF file", e);
                 }
-            },flushInterval, flushInterval, java.util.concurrent.TimeUnit.MILLISECONDS);
+            }, flushInterval, flushInterval, java.util.concurrent.TimeUnit.MILLISECONDS);
         }
     }
 
@@ -103,7 +98,6 @@ public class AofBatchWriter {
                 if(batchSize > 0){
                     writeBatch(batch, batchSize);
                     for(int i = 0; i < batchSize; i++){
-                        pendingBytes.addAndGet(-batch[i].readableBytes());
                         batch[i].release();
                         batch[i] = null;
                     }
@@ -145,67 +139,125 @@ public class AofBatchWriter {
         }catch(Exception e){
             log.error("Failed to write batch to AOF file", e);
         }
-    }
-
-
-
-    public void write(ByteBuf byteBuf) throws IOException{
+    }    public void write(ByteBuf byteBuf) throws IOException {
         int byteSize = byteBuf.readableBytes();
-        if(byteSize > LARGE_COMMAND_THRESHOLD){
-            try{
+        
+        if (byteSize > LARGE_COMMAND_THRESHOLD) {
+            try {
                 ByteBuffer byteBuffer = byteBuf.nioBuffer();
                 writer.write(byteBuffer);
                 flush();
-            }finally {
+            } catch (Exception e) {
+                throw new IOException("Failed to write large command", e);
+            } finally {
                 byteBuf.release();
-                return;
             }
+            return;
         }
 
-        pendingBytes.addAndGet(byteSize);
-
-        if(pendingBytes.get() > DEFAULT_BACKPRESSURE_THRESHOLD ||
-        writeQueue.size() >DEFAULT_QUEUQ_SIZE *0.75){
-            applyBackpressure();
-        }
-
-        try{
+        try {
             boolean success = writeQueue.offer(byteBuf, 3, TimeUnit.SECONDS);
-            if(!success){
+            if (!success) {
+                // 队列满时直接同步写入
                 ByteBuffer byteBuffer = byteBuf.nioBuffer();
                 writer.write(byteBuffer);
                 byteBuf.release();
+                log.warn("AOF队列满，直接同步写入 - 队列大小: {}", writeQueue.size());
             }
-        }catch(Exception e){
+        } catch (Exception e) {
             byteBuf.release();
             Thread.currentThread().interrupt();
-        }
+        }    }
 
+    /**
+     * 执行刷盘操作，使用默认超时时间
+     * 
+     * @throws Exception 刷盘失败或超时
+     */
+    public void flush() throws Exception {
+        flush(DEFAULT_FLUSH_TIMEOUT_MS);
     }
 
-    public void flush() throws Exception{
-        int retryCount = 0;
-        int maxRetries = 3;
-        while(!writeQueue.isEmpty() && retryCount < maxRetries){
-            try{
-                Thread.sleep(10);
-                writer.flush();
-                retryCount++;
-            }catch(InterruptedException e){
-                Thread.currentThread().interrupt();
-                break;
-            }catch(IOException e){
-                log.error("Failed to flush AOF file", e);
-                retryCount++;
-                if(retryCount >= maxRetries){
-                    throw e;
+    /**
+     * 快速刷盘模式（用于性能要求极高的场景）
+     * 
+     * @throws Exception 刷盘失败或超时
+     */
+    public void fastFlush() throws Exception {
+        flush(FAST_FLUSH_TIMEOUT_MS);
+    }
+
+    /**
+     * 慢速刷盘模式（用于I/O较慢的环境）
+     * 
+     * @throws Exception 刷盘失败或超时
+     */
+    public void slowFlush() throws Exception {
+        flush(SLOW_FLUSH_TIMEOUT_MS);
+    }
+    
+    /**
+     * 执行刷盘操作，指定超时时间
+     * 
+     * @param timeoutMs 超时时间(毫秒)
+     * @throws Exception 刷盘失败或超时
+     */
+    public void flush(final long timeoutMs) throws Exception {
+        final long startTime = System.currentTimeMillis();
+        final int maxRetries = 3;
+        
+        // 验证超时参数
+        if (timeoutMs <= 0) {
+            throw new IllegalArgumentException("超时时间必须大于0: " + timeoutMs);
+        }
+        
+        for (int retry = 0; retry < maxRetries; retry++) {
+            try {
+                // 1. 触发强制刷盘标志，让写入线程尽快处理
+                forceFlush.set(true);
+                
+                // 2. 等待队列清空，带超时控制
+                final long remainingTime = timeoutMs - (System.currentTimeMillis() - startTime);
+                if (remainingTime <= 0) {
+                    throw new IOException(String.format(
+                        "AOF刷盘超时 - 耗时超过%dms，队列剩余: %d", 
+                        timeoutMs, writeQueue.size()));
                 }
-            }
-            if(!writeQueue.isEmpty()){
-                throw new IOException("刷盘超时，队列中还有"+writeQueue.size()+"个数据未写入");
+                
+                // 3. 分段等待，避免长时间阻塞
+                final long waitStartTime = System.currentTimeMillis();
+                while (!writeQueue.isEmpty() && 
+                       (System.currentTimeMillis() - waitStartTime) < Math.min(remainingTime, 1000)) {
+                    Thread.sleep(Math.min(50, remainingTime / 10)); // 动态调整等待时间
+                }
+                
+                // 4. 如果队列已清空，执行最终刷盘
+                if (writeQueue.isEmpty()) {
+                    writer.flush();
+                    log.debug("AOF刷盘完成，耗时: {}ms", System.currentTimeMillis() - startTime);
+                    return;
+                }
+                
+                log.warn("AOF刷盘重试 {}/{}, 队列剩余: {}", retry + 1, maxRetries, writeQueue.size());
+                
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IOException("AOF刷盘被中断", e);
+            } catch (IOException e) {
+                if (retry == maxRetries - 1) {
+                    throw e; // 最后一次重试失败，抛出异常
+                }
+                log.warn("AOF刷盘重试 {}/{} 失败: {}", retry + 1, maxRetries, e.getMessage());
             }
         }
-    }    public void close() throws Exception {
+        
+        // 所有重试都失败
+        throw new IOException(String.format(
+            "AOF刷盘失败 - %d次重试后仍有数据未刷盘，队列剩余: %d", 
+            maxRetries, writeQueue.size()));
+    }
+
+    public void close() throws Exception {
         log.info("开始关闭 AofBatchWriter...");
         
         try {
@@ -280,51 +332,17 @@ public class AofBatchWriter {
                     log.warn("释放队列中的ByteBuf时发生错误: {}", e.getMessage());
                 }
             }
-            
-            if (releasedCount > 0) {
+              if (releasedCount > 0) {
                 log.info("已释放队列中的 {} 个 ByteBuf 资源", releasedCount);
             }
-            
-            // 重置pending字节计数
-            pendingBytes.set(0);
-            
-        } catch (Exception e) {
+              } catch (Exception e) {
             log.error("清理写入队列时发生错误", e);
-        }
-    }
-
-    private void applyBackpressure() {
-        int currentBytes = pendingBytes.get();
-        int queueSize = writeQueue.size();
-
-        double pressureLevel = Math.max((double) currentBytes / DEFAULT_BACKPRESSURE_THRESHOLD, (double) queueSize / DEFAULT_QUEUQ_SIZE * 0.75);
-
-        if (pressureLevel >= 1) {
-            try {
-                long waitTime = Math.min(50, (long) (pressureLevel * 20));
-
-                if (pressureLevel >= 1.5) {
-                    log.warn("AOF写入压力过大，当前队列大小为{}，当前待写入字节数为{}", queueSize, currentBytes);
-                }
-
-                if (pressureLevel >= 2) {
-                    try {
-                        forceFlush.set(true);
-                    } catch (Exception e) {
-                        log.error("强制刷盘失败", e);
-                    }
-                }
-
-                Thread.sleep(waitTime);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
         }
     }
 
     private long calculateTimeout(int currentBatchSize) {
         int queueSize = writeQueue.size();
-        if(queueSize > DEFAULT_QUEUQ_SIZE / 2){
+        if (queueSize > DEFAULT_QUEUE_SIZE / 2) {
             return MIN_BATCH_TIMEOUT_MS;
         }
         return MAX_BATCH_TIMEOUT_MS;
@@ -332,12 +350,39 @@ public class AofBatchWriter {
 
     private int calculateBatchSize(int batchSize) {
         int queueSize = writeQueue.size();
-        int result = Math.min(MAX_BATCH_SIZE,Math.min(MIN_BATCH_SIZE, MIN_BATCH_SIZE + queueSize / 20));
+        int result = Math.min(MAX_BATCH_SIZE, Math.min(MIN_BATCH_SIZE, MIN_BATCH_SIZE + queueSize / 20));
         return result;
     }
 
-
-    public int getBatchCount() {
-        return (int) batchCount.get();
+    // ==================== 监控指标方法 ====================
+    
+    /**
+     * 获取已处理的批次数量
+     */
+    public long getBatchCount() {
+        return batchCount.get();
     }
+    
+    /**
+     * 获取总的批处理命令数
+     */
+    public long getTotalBatchedCommands() {
+        return totalBatchedCommands.get();
+    }
+    
+    /**
+     * 获取队列大小
+     */
+    public int getQueueSize() {
+        return writeQueue.size();
+    }
+    
+    
+    /**
+     * 检查是否正在运行
+     */
+    public boolean isRunning() {
+        return running.get();
+    }
+
 }

@@ -22,36 +22,52 @@ import site.hnfy258.command.impl.string.Set;
 import site.hnfy258.command.impl.string.Strlen;
 import site.hnfy258.command.impl.zset.Zadd;
 import site.hnfy258.command.impl.zset.Zrange;
+import site.hnfy258.datastructure.RedisBytes;
 import site.hnfy258.server.core.RedisCore;
 
 import java.util.function.Function;
+
 @Getter
 public enum CommandType {
-    PING(core ->new Ping()),    SET(Set::new),
-    GET(Get::new),
-    APPEND(Append::new),
-    STRLEN(Strlen::new),
-    GETRANGE(Getrange::new),
-    SADD(Sadd::new),
-    SPOP(Spop::new),
-    SREM(Srem::new),
-    LPUSH(Lpush::new),
-    LPOP(Lpop::new),
-    LRANGE(Lrange::new),
-    HSET(Hset::new),
-    HGET(Hget::new),
-    HDEL(Hdel::new),
-    ZADD(Zadd::new),
-    ZRANGE(Zrange::new),
-    SELECT(Select::new),
-    BGSAVE(Bgsave::new),
-    BGREWRITEAOF(Bgrewriteaof::new),
-    PSYNC(Psync::new);
+    PING("PING", core -> new Ping()),    
+    SET("SET", Set::new),
+    GET("GET", Get::new),
+    APPEND("APPEND", Append::new),
+    STRLEN("STRLEN", Strlen::new),
+    GETRANGE("GETRANGE", Getrange::new),
+    SADD("SADD", Sadd::new),
+    SPOP("SPOP", Spop::new),
+    SREM("SREM", Srem::new),
+    LPUSH("LPUSH", Lpush::new),
+    LPOP("LPOP", Lpop::new),
+    LRANGE("LRANGE", Lrange::new),
+    HSET("HSET", Hset::new),
+    HGET("HGET", Hget::new),
+    HDEL("HDEL", Hdel::new),
+    ZADD("ZADD", Zadd::new),
+    ZRANGE("ZRANGE", Zrange::new),
+    SELECT("SELECT", Select::new),
+    BGSAVE("BGSAVE", Bgsave::new),
+    BGREWRITEAOF("BGREWRITEAOF", Bgrewriteaof::new),
+    PSYNC("PSYNC", Psync::new);
 
     private final Function<RedisCore, Command> supplier;
+    private final RedisBytes commandBytes;
 
-    CommandType(Function<RedisCore, Command> supplier) {
+    CommandType(String commandName, Function<RedisCore, Command> supplier) {
         this.supplier = supplier;
+        this.commandBytes = RedisBytes.fromString(commandName);
     }
 
+    public boolean matchesBytes(byte[] bytes) {
+        return commandBytes.equalsIgnoreCase(new RedisBytes(bytes));
+    }
+
+    public boolean matchesRedisBytes(RedisBytes other) {
+        return commandBytes.equalsIgnoreCase(other);
+    }
+
+    public Command createCommand(RedisCore core) {
+        return supplier.apply(core);
+    }
 }

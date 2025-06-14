@@ -3,6 +3,7 @@ package site.hnfy258.server.core;
 import site.hnfy258.database.RedisDB;
 import site.hnfy258.datastructure.RedisBytes;
 import site.hnfy258.datastructure.RedisData;
+import site.hnfy258.server.RedisMiniServer;
 import site.hnfy258.server.RedisServer;
 
 import java.util.Collections;
@@ -84,5 +85,10 @@ public class RedisCoreImpl implements RedisCore{
         for(RedisDB db : databases){
             db.clear();
         }
+    }
+
+    @Override
+    public void setServer(RedisMiniServer server) {
+        this.server = server;
     }
 }

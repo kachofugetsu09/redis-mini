@@ -153,7 +153,8 @@ public class AofWriter implements Writer{
     @Override
     public void flush() throws IOException {
         channel.force(true);
-    }    @Override
+    }
+    @Override
     public void close() throws IOException {
         try {
             // 1. 等待重写任务完成
@@ -179,7 +180,7 @@ public class AofWriter implements Writer{
             this.channel = null;
             this.raf = null;
             
-            log.info("AOF Writer 已成功关闭");
+            log.debug("AOF Writer 已成功关闭");
             
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -350,14 +351,14 @@ public class AofWriter implements Writer{
         if (fileChannel != null && fileChannel.isOpen()) {
             try {
                 // 1. 执行关闭前最后一次刷盘
-                log.info("执行关闭前最后一次刷盘");
+                log.debug("执行关闭前最后一次刷盘");
                 fileChannel.force(true);
                 
                 // 2. 截断文件到实际大小
                 final long currentSize = realSize.get();
                 if (currentSize > 0) {
                     fileChannel.truncate(currentSize);
-                    log.info("AOF文件已截断到长度{}", currentSize);
+                    log.debug("AOF文件已截断到长度{}", currentSize);
                 }
                 
                 // 3. 关闭FileChannel

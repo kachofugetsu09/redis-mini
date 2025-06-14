@@ -6,6 +6,30 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 public abstract class Resp {
     public static final byte[] CRLF = "\r\n".getBytes();
+    protected static final byte[][] NUMBERS = new byte[512][]; // 缓存数字的字节表示
+    protected static final int MAX_CACHED_NUMBER = 255;
+    
+    // 静态初始化数字缓存
+    static {
+        for (int i = 0; i <= MAX_CACHED_NUMBER; i++) {
+            NUMBERS[i] = String.valueOf(i).getBytes();
+        }
+        // 缓存负数
+        for (int i = 1; i <= MAX_CACHED_NUMBER; i++) {
+            NUMBERS[i + 256] = String.valueOf(-i).getBytes();
+        }
+    }
+    
+    // 写入数字的优化方法
+    protected static void writeIntegerAsBytes(ByteBuf buf, int value) {
+        if (value >= 0 && value <= MAX_CACHED_NUMBER) {
+            buf.writeBytes(NUMBERS[value]);
+        } else if (value < 0 && value >= -MAX_CACHED_NUMBER) {
+            buf.writeBytes(NUMBERS[-value + 256]);
+        } else {
+            buf.writeBytes(String.valueOf(value).getBytes());
+        }
+    }
 
     //SimpleString "+OK\r\n"
     //Errors "-Error message\r\n"
