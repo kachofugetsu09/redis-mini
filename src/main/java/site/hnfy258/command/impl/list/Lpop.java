@@ -9,6 +9,7 @@ import site.hnfy258.datastructure.RedisList;
 import site.hnfy258.protocal.BulkString;
 import site.hnfy258.protocal.Errors;
 import site.hnfy258.protocal.Resp;
+import site.hnfy258.server.context.RedisContext;
 import site.hnfy258.server.core.RedisCore;
 
 /**
@@ -20,12 +21,12 @@ import site.hnfy258.server.core.RedisCore;
  */
 @Slf4j
 public class Lpop implements Command {
-    
-    private final RedisCore redisCore;
+
+    private RedisContext redisContext;
     private RedisBytes key;
 
-    public Lpop(final RedisCore redisCore) {
-        this.redisCore = redisCore;
+    public Lpop(final RedisContext redisContext) {
+        this.redisContext = redisContext;
     }
 
     @Override
@@ -45,7 +46,7 @@ public class Lpop implements Command {
     public Resp handle() {
         try {
             // 1. 获取列表数据
-            final RedisData redisData = redisCore.get(key);
+            final RedisData redisData = redisContext.get(key);
 
             if (redisData == null) {
                 // 2. 键不存在，返回null
@@ -70,10 +71,10 @@ public class Lpop implements Command {
             // 6. 更新列表状态
             if (redisList.size() == 0) {
                 // 7. 如果列表变空，删除键
-                redisCore.put(key, null);
+                redisContext.put(key, null);
             } else {
                 // 8. 保存更新后的列表
-                redisCore.put(key, redisList);
+                redisContext.put(key, redisList);
             }
 
             return new BulkString(poppedElement);

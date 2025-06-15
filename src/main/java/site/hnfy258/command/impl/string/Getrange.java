@@ -10,6 +10,7 @@ import site.hnfy258.internal.Sds;
 import site.hnfy258.protocal.BulkString;
 import site.hnfy258.protocal.Resp;
 import site.hnfy258.protocal.RespInteger;
+import site.hnfy258.server.context.RedisContext;
 import site.hnfy258.server.core.RedisCore;
 
 /**
@@ -27,10 +28,10 @@ public class Getrange implements Command {
     private RedisBytes key;
     private int start;
     private int end;
-    private RedisCore redisCore;
+    private RedisContext redisContext;
 
-    public Getrange(RedisCore redisCore) {
-        this.redisCore = redisCore;
+    public Getrange(RedisContext redisContext) {
+        this.redisContext = redisContext;
     }
 
     @Override
@@ -50,7 +51,7 @@ public class Getrange implements Command {
 
     @Override
     public Resp handle() {
-        RedisData data = redisCore.get(key);
+        RedisData data = redisContext.get(key);
         
         if (data == null) {
             // 键不存在，返回空字符串

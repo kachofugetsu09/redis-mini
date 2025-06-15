@@ -20,7 +20,7 @@
     </appender>
 
     <!-- 日志级别 -->
-    <root level="WARN">
+    <root level="INFO">
         <appender-ref ref="CONSOLE" />
         <appender-ref ref="FILE" />
     </root>

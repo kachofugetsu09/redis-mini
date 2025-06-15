@@ -12,7 +12,7 @@ import site.hnfy258.aof.writer.AofBatchWriter;
 import site.hnfy258.aof.writer.AofWriter;
 import site.hnfy258.aof.writer.Writer;
 import site.hnfy258.protocal.RespArray;
-import site.hnfy258.server.core.RedisCore;
+import site.hnfy258.server.context.RedisContext;
 
 import java.io.File;
 import java.io.IOException;
@@ -27,7 +27,9 @@ public class AofManager {
     private AofLoader aofLoader;
     private String fileName;
     private boolean fileExists;
-    private RedisCore redisCore;
+    
+    // 核心依赖：统一使用RedisContext
+    private final RedisContext redisContext;
 
     ReentrantLock writeLock = new ReentrantLock();
 
@@ -35,19 +37,95 @@ public class AofManager {
 
     private static final int DEFAULT_FLUSH_INTERVAL_MS = 1000;
     private static final boolean DEFAULT_PREALLOCATE = true;
-
-
-    public AofManager(String fileName,RedisCore redisCore) throws Exception {
-        this(fileName,new File(fileName).exists(),DEFAULT_PREALLOCATE,DEFAULT_FLUSH_INTERVAL_MS,redisCore);
+    /**
+     * 新增构造函数：支持RedisContext的版本
+     * 这是为了逐步迁移到统一上下文模式，解决循环依赖问题
+     * 
+     * @param fileName AOF文件名
+     * @param redisContext Redis统一上下文，提供所有核心功能的访问接口
+     * @throws Exception 初始化异常
+     */
+    public AofManager(final String fileName, final RedisContext redisContext) 
+            throws Exception {
+        this(fileName, new File(fileName).exists(), DEFAULT_PREALLOCATE, 
+             DEFAULT_FLUSH_INTERVAL_MS, redisContext);
     }
 
-    public AofManager(String fileName,boolean fileExists,boolean preallocated, int flushInterval, RedisCore redisCore) throws Exception {
+    /**
+     * 新增构造函数：支持RedisContext的完整版本
+     * 
+     * @param fileName AOF文件名
+     * @param fileExists 文件是否存在
+     * @param preallocated 是否预分配
+     * @param flushInterval 刷新间隔
+     * @param redisContext Redis统一上下文
+     * @throws Exception 初始化异常
+     */
+    public AofManager(final String fileName, final boolean fileExists, 
+                     final boolean preallocated, final int flushInterval,
+                     final RedisContext redisContext) throws Exception {
         this.fileName = fileName;
-        this.fileExists = fileExists;
-        this.aofWriter = new AofWriter(new File(fileName), preallocated,flushInterval, null,redisCore);
-        this.batchWriter = new AofBatchWriter(aofWriter,flushInterval);
-        this.redisCore = redisCore;
-        this.aofLoader = new AofLoader(fileName,redisCore);
+        this.fileExists = fileExists;        this.redisContext = redisContext;
+        
+        // 1. 初始化AOF相关组件
+        this.aofWriter = new AofWriter(new File(fileName), preallocated, 
+                                      flushInterval, null, this.redisContext);
+        this.batchWriter = new AofBatchWriter(aofWriter, flushInterval);
+        // 使用RedisContext创建AofLoader，确保数据加载到正确的数据库
+        this.aofLoader = new AofLoader(fileName, this.redisContext);
+          log.info("AofManager使用RedisContext模式初始化完成，文件: {}", fileName);
+    }
+
+    /**
+     * 向AOF文件写入字节数组命令
+     * 用于RedisContext的持久化层调用
+     * 
+     * @param commandBytes 命令字节数组
+     * @throws IOException 写入失败时抛出
+     */
+    public void appendBytes(final byte[] commandBytes) throws IOException {
+        if (commandBytes == null || commandBytes.length == 0) {
+            return;
+        }
+        
+        ByteBuf byteBuf = allocator.buffer(commandBytes.length);
+        boolean committedToBatchWriter = false;
+
+        try {
+            byteBuf.writeBytes(commandBytes);
+            writeLock.lock();
+            try {
+                batchWriter.write(byteBuf);
+                committedToBatchWriter = true;
+            } finally {
+                writeLock.unlock();
+            }
+        } catch (Exception e) {
+            throw new IOException("Failed to write bytes to AOF file", e);
+        } finally {
+            if (!committedToBatchWriter) {
+                ReferenceCountUtil.release(byteBuf);
+            }
+        }
+    }
+    
+    /**
+     * 强制刷新AOF缓冲区到磁盘
+     * 用于RedisContext的持久化层调用
+     * 
+     * @throws IOException 刷新失败时抛出
+     */
+    public void flushBuffer() throws IOException {
+        writeLock.lock();
+        try {
+            if (batchWriter != null) {
+                batchWriter.flush();
+            }
+        } catch (Exception e) {
+            throw new IOException("Failed to flush AOF buffer", e);
+        } finally {
+            writeLock.unlock();
+        }
     }
 
     public void append(RespArray respArray) throws IOException {

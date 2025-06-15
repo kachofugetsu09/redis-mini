@@ -9,6 +9,7 @@ import site.hnfy258.protocal.BulkString;
 import site.hnfy258.protocal.Errors;
 import site.hnfy258.protocal.Resp;
 import site.hnfy258.protocal.RespInteger;
+import site.hnfy258.server.context.RedisContext;
 import site.hnfy258.server.core.RedisCore;
 
 import java.util.List;
@@ -16,12 +17,12 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 public class Hdel implements Command {
-    private RedisCore redisCore;
+    private RedisContext redisContext;
     private RedisBytes key;
     private List<RedisBytes> fields;
 
-    public Hdel(RedisCore redisCore) {
-        this.redisCore = redisCore;
+    public Hdel(RedisContext redisContext) {
+        this.redisContext = redisContext;
     }
     @Override
     public CommandType getType() {
@@ -39,7 +40,7 @@ public class Hdel implements Command {
 
     @Override
     public Resp handle() {
-        RedisData redisData = redisCore.get(key);
+        RedisData redisData = redisContext.get(key);
         if(redisData == null){
             return new BulkString(new RedisBytes("0".getBytes()));
         }

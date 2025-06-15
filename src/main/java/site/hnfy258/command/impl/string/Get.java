@@ -9,17 +9,17 @@ import site.hnfy258.datastructure.RedisString;
 import site.hnfy258.protocal.BulkString;
 import site.hnfy258.protocal.Errors;
 import site.hnfy258.protocal.Resp;
-import site.hnfy258.server.core.RedisCore;
+import site.hnfy258.server.context.RedisContext;
 
 import static site.hnfy258.protocal.BulkString.NULL_BYTES;
 
 @Slf4j
 public class Get implements Command {
-    private RedisCore redisCore;
+    private RedisContext redisContext;
     private RedisBytes key;
 
-    public Get(RedisCore redisCore) {
-        this.redisCore = redisCore;
+    public Get(RedisContext redisContext) {
+        this.redisContext = redisContext;
     }
     @Override
     public CommandType getType() {
@@ -34,7 +34,7 @@ public class Get implements Command {
     @Override
     public Resp handle() {
         try{
-            RedisData data = redisCore.get(key);
+            RedisData data = redisContext.get(key);
             if(data == null){
                 return new BulkString(NULL_BYTES);
             }

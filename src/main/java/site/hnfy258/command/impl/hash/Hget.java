@@ -8,15 +8,16 @@ import site.hnfy258.datastructure.RedisHash;
 import site.hnfy258.protocal.BulkString;
 import site.hnfy258.protocal.Errors;
 import site.hnfy258.protocal.Resp;
+import site.hnfy258.server.context.RedisContext;
 import site.hnfy258.server.core.RedisCore;
 
 public class Hget implements Command {
-    private RedisCore redisCore;
+    private RedisContext redisContext;
     private RedisBytes key;
     private RedisBytes field;
 
-    public Hget(RedisCore redisCore) {
-        this.redisCore = redisCore;
+    public Hget(RedisContext redisContext) {
+        this.redisContext = redisContext;
     }
     @Override
     public CommandType getType() {
@@ -34,7 +35,7 @@ public class Hget implements Command {
 
     @Override
     public Resp handle() {
-        RedisData redisData = redisCore.get(key);
+        RedisData redisData = redisContext.get(key);
         if(redisData == null) return new BulkString((RedisBytes)null);
         if(redisData instanceof RedisHash){
             RedisHash redisHash = (RedisHash) redisData;

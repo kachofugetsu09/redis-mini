@@ -21,7 +21,7 @@ public class RdbUtils {
 
     public static void writeRdbFooter(DataOutputStream dos) throws IOException {
         dos.writeByte(RdbConstants.RDB_OPCODE_EOF);
-        //todo 添加校验和机制
+        //应当添加校验和机制
         dos.writeLong(0);
     }
 

@@ -10,6 +10,7 @@ import site.hnfy258.internal.Sds;
 import site.hnfy258.protocal.BulkString;
 import site.hnfy258.protocal.Resp;
 import site.hnfy258.protocal.RespInteger;
+import site.hnfy258.server.context.RedisContext;
 import site.hnfy258.server.core.RedisCore;
 
 /**
@@ -26,10 +27,10 @@ import site.hnfy258.server.core.RedisCore;
 public class Append implements Command {
     private RedisBytes key;
     private RedisBytes value;
-    private RedisCore redisCore;
+    private RedisContext redisContext;
 
-    public Append(RedisCore redisCore) {
-        this.redisCore = redisCore;
+    public Append(RedisContext redisContext) {
+        this.redisContext = redisContext;
     }
 
     @Override
@@ -48,12 +49,12 @@ public class Append implements Command {
 
     @Override
     public Resp handle() {
-        RedisData data = redisCore.get(key);
+        RedisData data = redisContext.get(key);
         
         if (data == null) {
             // 键不存在，创建新的RedisString
             Sds sds = new Sds(value.getBytes());
-            redisCore.put(key, new RedisString(sds));
+            redisContext.put(key, new RedisString(sds));
             return new RespInteger(value.getBytes().length);
         }
         

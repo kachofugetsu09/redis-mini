@@ -3,18 +3,30 @@ package site.hnfy258.rdb;
 import lombok.extern.slf4j.Slf4j;
 import site.hnfy258.database.RedisDB;
 import site.hnfy258.datastructure.*;
-import site.hnfy258.server.core.RedisCore;
+import site.hnfy258.server.context.RedisContext;
 
 import java.io.*;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
+
+/**
+ * RDB写入器 - 负责将Redis数据持久化到RDB文件
+ * 
+ * <p>重构说明：原依赖RedisCore，现改为依赖RedisContext，实现彻底解耦</p>
+ */
 @Slf4j
 public class RdbWriter {
-    private RedisCore redisCore;
+    // ========== 核心依赖：使用RedisContext替代RedisCore ==========
+    private final RedisContext redisContext;
     private final AtomicBoolean running = new AtomicBoolean(false);
 
-    public RdbWriter(RedisCore redisCore) {
-        this.redisCore = redisCore;
+    /**
+     * 构造函数：基于RedisContext的解耦架构
+     * 
+     * @param redisContext Redis统一上下文
+     */
+    public RdbWriter(RedisContext redisContext) {
+        this.redisContext = redisContext;
     }
 
     public boolean writeRdb(String fileName) {
@@ -36,10 +48,8 @@ public class RdbWriter {
         }
         running.set(false);
         return true;
-    }
-
-    private void saveAllDatabases(DataOutputStream dos) throws IOException {
-        RedisDB[] databases = redisCore.getDataBases();
+    }    private void saveAllDatabases(DataOutputStream dos) throws IOException {
+        RedisDB[] databases = redisContext.getRedisCore().getDataBases();
         for(RedisDB db : databases){
            log.info("正在保存数据库: {}", db.getId());
            if(db.size() > 0){

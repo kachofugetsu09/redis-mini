@@ -12,7 +12,7 @@ import site.hnfy258.internal.Dict;
 import site.hnfy258.protocal.BulkString;
 import site.hnfy258.protocal.Resp;
 import site.hnfy258.protocal.RespArray;
-import site.hnfy258.server.core.RedisCore;
+import site.hnfy258.server.context.RedisContext;
 
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -30,8 +30,14 @@ import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+
+/**
+ * AOF写入器 - 负责将Redis命令持久化到AOF文件
+ * 
+ * <p>重构说明：原依赖RedisCore，现改为依赖RedisContext，实现彻底解耦</p>
+ */
 @Slf4j
-public class AofWriter implements Writer{
+public class AofWriter implements Writer {
     private File file;
     private FileChannel channel;
     private RandomAccessFile raf;
@@ -39,16 +45,28 @@ public class AofWriter implements Writer{
     private AtomicLong realSize = new AtomicLong(0);
     private final AtomicBoolean rewriting = new AtomicBoolean(false);
 
-    public static final int  DEFAULT_REWRITE_BUFFER_SIZE = 100000;
+    public static final int DEFAULT_REWRITE_BUFFER_SIZE = 100000;
     BlockingQueue<ByteBuffer> rewriteBufferQueue;
 
-    private RedisCore redisCore;
+    // ========== 核心依赖：使用RedisContext替代RedisCore ==========
+    private final RedisContext redisContext;
 
     private static final int DEFAULT_PREALLOCATE_SIZE = 4 * 1024 * 1024;
-    public AofWriter(File file, boolean preallocated, int flushInterval, FileChannel channel,RedisCore redisCore) throws FileNotFoundException {
+
+    /**
+     * 构造函数：基于RedisContext的解耦架构
+     * 
+     * @param file AOF文件
+     * @param preallocated 是否预分配磁盘空间
+     * @param flushInterval 刷盘间隔
+     * @param channel 文件通道
+     * @param redisContext Redis统一上下文
+     * @throws FileNotFoundException 文件未找到异常
+     */    public AofWriter(File file, boolean preallocated, int flushInterval, 
+                     FileChannel channel, RedisContext redisContext) throws FileNotFoundException {
         this.file = file;
         this.isPreallocated = preallocated;
-        this.redisCore = redisCore;
+        this.redisContext = redisContext;
         this.rewriteBufferQueue = new LinkedBlockingDeque<>(DEFAULT_REWRITE_BUFFER_SIZE);
 
         if(channel == null){
@@ -213,10 +231,8 @@ public class AofWriter implements Writer{
             rewriteFile = File.createTempFile("redis_aof_temp", ".aof", file.getParentFile());
             rewriteRaf = new RandomAccessFile(rewriteFile, "rw");
             rewriteChannel = rewriteRaf.getChannel();
-            rewriteChannel.position(0);
-            
-            // 2. 进行数据库的重写
-            final RedisDB[] dataBases = redisCore.getDataBases();
+            rewriteChannel.position(0);            // 2. 进行数据库的重写
+            final RedisDB[] dataBases = redisContext.getRedisCore().getDataBases();
             for (int i = 0; i < dataBases.length; i++) {
                 final RedisDB db = dataBases[i];
                 if (db.size() > 0) {

@@ -11,6 +11,7 @@ import site.hnfy258.command.Command;
 import site.hnfy258.command.CommandType;
 import site.hnfy258.datastructure.RedisBytes;
 import site.hnfy258.protocal.*;
+import site.hnfy258.server.context.RedisContext;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -25,14 +26,18 @@ public class ReplicationHandler extends ChannelInboundHandlerAdapter {
 
     private static final int MAX_ACCUMULATOR_SIZE = 512 * 1024 * 1024;
 
+    // ========== Channel上下文管理 ==========
+    private ChannelHandlerContext currentContext;
+
     public ReplicationHandler(RedisNode redisNode) {
         this.redisNode = redisNode;
         this.stateMachine = redisNode.getReplicationStateMachine();
     }
-
-
     @Override
     public void channelActive(ChannelHandlerContext ctx) throws Exception {
+        // 1. 保存当前的Channel上下文，用于后续通信
+        this.currentContext = ctx;
+        
         log.debug("从节点连接到主节点");
         if(stateMachine.transitionTo(ReplicationState.CONNECTING)){
             log.debug("状态转换到 CONNECTING");
@@ -41,10 +46,11 @@ public class ReplicationHandler extends ChannelInboundHandlerAdapter {
             log.warn("无法转换到 CONNECTING 状态，当前状态: {}", stateMachine.getCurrentState());
             super.channelActive(ctx);
         }
-    }
-
-    @Override
+    }    @Override
     public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+        // 1. 清理当前的Channel上下文
+        this.currentContext = null;
+        
         cleanup();
         super.channelInactive(ctx);
     }
@@ -276,12 +282,10 @@ public class ReplicationHandler extends ChannelInboundHandlerAdapter {
                         if(commandOffset <= 0){
                             log.warn("命令偏移量计算失败，无法处理命令: {}", command);
                             continue;
-                        }
-
-                        boolean executed = executeReplicationCommand(command);
+                        }                        boolean executed = executeReplicationCommand(command);
                         if(executed){
                             successCount++;
-                            long newOffset = stateMachine.updateReplicationOffset(commandOffset);
+                            stateMachine.updateReplicationOffset(commandOffset);
                         }
                     }catch(Exception e){
                         log.error("处理增量同步命令时发生错误: {}", e.getMessage(), e);
@@ -316,12 +320,18 @@ public class ReplicationHandler extends ChannelInboundHandlerAdapter {
             log.error("处理全量同步响应时发生错误: {}", e.getMessage(), e);
             stateMachine.transitionTo(ReplicationState.ERROR);
         }
-    }    
-    private boolean  executeReplicationCommand(RespArray command) {
+    }      /**
+     * 执行复制命令
+     * 
+     * @param command 要执行的命令
+     * @return 是否执行成功
+     */
+    private boolean executeReplicationCommand(RespArray command) {
         if (!isValidCommand(command)) {
             log.warn("[从节点] 无效的复制命令: {}", command);
             return false;
         }
+        
         CommandType commandType;
         try {
             String commandName = getCommandName(command);
@@ -330,16 +340,24 @@ public class ReplicationHandler extends ChannelInboundHandlerAdapter {
             log.warn("从节点无法识别命令类型: {}", command, e);
             return false;
         }
-        Command cmd = commandType.getSupplier().apply(redisNode.getRedisCore());
-        cmd.setContext(command.getContent());
+        
+        try {
+            // 1. 直接通过RedisNode获取RedisContext，不再临时创建
+            RedisContext context = redisNode.getRedisContext();
+            Command cmd = commandType.createCommand(context);
+            cmd.setContext(command.getContent());
 
-        Resp result = cmd.handle();
+            Resp result = cmd.handle();
 
-        if (result instanceof Errors) {
-            log.warn("[从节点] 执行命令失败: {}", ((Errors) result).getContent());
+            if (result instanceof Errors) {
+                log.warn("[从节点] 执行命令失败: {}", ((Errors) result).getContent());
+                return false;
+            }
+            return true;
+        } catch (Exception e) {
+            log.error("[从节点] 执行复制命令时发生异常: {}", e.getMessage(), e);
             return false;
         }
-        return true;
     }
 
     private String getCommandName(RespArray command) {
@@ -451,10 +469,44 @@ public class ReplicationHandler extends ChannelInboundHandlerAdapter {
         }
     }
 
-    
-
-    private void notifyMasterToSyncBacklogOffset(long correctOffset) {
-        //todo
+    /**
+     * 通知主节点同步backlog偏移量
+     * 
+     * @param correctOffset 正确的偏移量
+     */
+    private void notifyMasterToSyncBacklogOffset(final long correctOffset) {
+        try {
+            // 1. 获取当前的Channel上下文
+            final ChannelHandlerContext currentCtx = getCurrentChannelContext();
+            if (currentCtx == null || !currentCtx.channel().isActive()) {
+                log.warn("无法通知主节点同步偏移量：主节点连接不可用，偏移量: {}", correctOffset);
+                return;
+            }
+            
+            // 2. 构造ACK命令通知主节点当前的复制偏移量
+            final String ackCommand = String.format("REPLCONF ACK %d", correctOffset);
+            final ByteBuf ackBuffer = Unpooled.wrappedBuffer(ackCommand.getBytes());
+            
+            // 3. 发送ACK命令到主节点
+            currentCtx.writeAndFlush(ackBuffer).addListener(future -> {
+                if (future.isSuccess()) {
+                    log.debug("成功发送偏移量ACK到主节点: {}", correctOffset);
+                } else {
+                    log.error("发送偏移量ACK失败: {}", future.cause().getMessage());
+                }
+            });
+            
+        } catch (Exception e) {
+            log.error("通知主节点同步偏移量时发生错误: {}", e.getMessage(), e);
+        }
+    }
+      /**
+     * 获取当前的Channel上下文
+     * 
+     * @return ChannelHandlerContext或null
+     */
+    private ChannelHandlerContext getCurrentChannelContext() {
+        return currentContext;
     }
 
     private void syncStateToNodeState() {

@@ -27,41 +27,41 @@ import site.hnfy258.command.impl.string.Strlen;
 import site.hnfy258.command.impl.zset.Zadd;
 import site.hnfy258.command.impl.zset.Zrange;
 import site.hnfy258.datastructure.RedisBytes;
-import site.hnfy258.server.core.RedisCore;
+import site.hnfy258.server.context.RedisContext;
 
 import java.util.function.Function;
 
 @Getter
-public enum CommandType {    PING("PING", core -> new Ping()),    
-    SET("SET", Set::new),
-    GET("GET", Get::new),
-    INCR("INCR", Incr::new),
-    MSET("MSET", Mset::new),
-    APPEND("APPEND", Append::new),
-    STRLEN("STRLEN", Strlen::new),
-    GETRANGE("GETRANGE", Getrange::new),
-    SADD("SADD", Sadd::new),
-    SPOP("SPOP", Spop::new),
-    SREM("SREM", Srem::new),    LPUSH("LPUSH", Lpush::new),
-    LPOP("LPOP", Lpop::new),
-    RPUSH("RPUSH", Rpush::new),
-    RPOP("RPOP", Rpop::new),
-    LRANGE("LRANGE", Lrange::new),
-    HSET("HSET", Hset::new),
-    HGET("HGET", Hget::new),
-    HDEL("HDEL", Hdel::new),
-    ZADD("ZADD", Zadd::new),
-    ZRANGE("ZRANGE", Zrange::new),
-    SELECT("SELECT", Select::new),
-    BGSAVE("BGSAVE", Bgsave::new),
-    BGREWRITEAOF("BGREWRITEAOF", Bgrewriteaof::new),
-    PSYNC("PSYNC", Psync::new);
+public enum CommandType {
+    PING("PING"),
+    SET("SET"),
+    GET("GET"),
+    INCR("INCR"),
+    MSET("MSET"),
+    APPEND("APPEND"),
+    STRLEN("STRLEN"),
+    GETRANGE("GETRANGE"),
+    SADD("SADD"),
+    SPOP("SPOP"),
+    SREM("SREM"),    
+    LPUSH("LPUSH"),
+    LPOP("LPOP"),
+    RPUSH("RPUSH"),
+    RPOP("RPOP"),
+    LRANGE("LRANGE"),
+    HSET("HSET"),
+    HGET("HGET"),
+    HDEL("HDEL"),
+    ZADD("ZADD"),
+    ZRANGE("ZRANGE"),
+    SELECT("SELECT"),
+    BGSAVE("BGSAVE"),
+    BGREWRITEAOF("BGREWRITEAOF"),
+    PSYNC("PSYNC");
 
-    private final Function<RedisCore, Command> supplier;
     private final RedisBytes commandBytes;
 
-    CommandType(String commandName, Function<RedisCore, Command> supplier) {
-        this.supplier = supplier;
+    CommandType(final String commandName) {
         this.commandBytes = RedisBytes.fromString(commandName);
     }
 
@@ -71,9 +71,66 @@ public enum CommandType {    PING("PING", core -> new Ping()),
 
     public boolean matchesRedisBytes(RedisBytes other) {
         return commandBytes.equalsIgnoreCase(other);
-    }
-
-    public Command createCommand(RedisCore core) {
-        return supplier.apply(core);
+    }    /**
+     * 使用RedisContext创建命令实例
+     * 
+     * @param context Redis统一上下文
+     * @return 命令实例
+     */
+    public Command createCommand(final RedisContext context) {
+        switch (this) {
+            case PING:
+                return new Ping();
+            case SET:
+                return new Set(context);
+            case GET:
+                return new Get(context);
+            case INCR:
+                return new Incr(context);
+            case MSET:
+                return new Mset(context);
+            case APPEND:
+                return new Append(context);
+            case STRLEN:
+                return new Strlen(context);
+            case GETRANGE:
+                return new Getrange(context);
+            case SADD:
+                return new Sadd(context);
+            case SPOP:
+                return new Spop(context);
+            case SREM:
+                return new Srem(context);
+            case LPUSH:
+                return new Lpush(context);
+            case LPOP:
+                return new Lpop(context);
+            case RPUSH:
+                return new Rpush(context);
+            case RPOP:
+                return new Rpop(context);
+            case LRANGE:
+                return new Lrange(context);
+            case HSET:
+                return new Hset(context);
+            case HGET:
+                return new Hget(context);
+            case HDEL:
+                return new Hdel(context);
+            case ZADD:
+                return new Zadd(context);
+            case ZRANGE:
+                return new Zrange(context);
+            case SELECT:
+                return new Select(context);
+            case BGSAVE:
+                return new Bgsave(context);
+            case BGREWRITEAOF:
+                return new Bgrewriteaof(context);
+            case PSYNC:
+                return new Psync(context);
+            default:
+                throw new IllegalArgumentException("不支持的命令类型: " + this);
+        }
     }
 }

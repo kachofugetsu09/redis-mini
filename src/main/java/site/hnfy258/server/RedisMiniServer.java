@@ -23,37 +23,37 @@ import site.hnfy258.cluster.node.RedisNode;
 import site.hnfy258.rdb.RdbManager;
 import site.hnfy258.server.core.RedisCore;
 import site.hnfy258.server.core.RedisCoreImpl;
+import site.hnfy258.server.core.SingleThreadCommandExecutor;
 import site.hnfy258.server.handler.RespCommandHandler;
 import site.hnfy258.server.handler.RespDecoder;
 import site.hnfy258.server.handler.RespEncoder;
 import io.netty.channel.ChannelOption;
-
+import site.hnfy258.server.context.RedisContext;
+import site.hnfy258.server.context.RedisContextImpl;
 
 @Slf4j
 @Getter
 @Setter
-public class RedisMiniServer implements RedisServer{
+public class RedisMiniServer implements RedisServer {
     private static final int DEFAULT_DBCOUNT = 16;
 
-
     private String host;
-    private int port;
-
+    private int port;    
     private EventLoopGroup bossGroup;
     private EventLoopGroup workerGroup;
     private EventExecutorGroup commandExecutor;
     private Channel serverChannel;
 
     public RespCommandHandler commandHandler;
-    private static final boolean ENABLE_AOF = false;
+    private static final boolean ENABLE_AOF = true;
     private AofManager aofManager;
     private static final boolean ENABLE_RDB = false;
     private RdbManager rdbManager;
     private String rdbFileName;
 
     private RedisCore redisCore;
-
     private RedisNode redisNode;
+    private RedisContext redisContext;
 
     public RedisMiniServer(String host, int port) throws Exception {
         this(host, port, "dump.rdb", "redis.aof");
@@ -66,29 +66,41 @@ public class RedisMiniServer implements RedisServer{
     public RedisMiniServer(String host, int port, String rdbFileName, String aofFileName) throws Exception {
         this.host = host;
         this.port = port;
+        
         // 1. 根据操作系统选择最优的EventLoopGroup实现
         initializeEventLoopGroups();
-        // 2. 根据操作系统选择最优的CommandExecutor实现
+        
+        // 2. 初始化严格单线程命令执行器
         initializeCommandExecutor();
-        this.redisCore = new RedisCoreImpl(DEFAULT_DBCOUNT,this);
-        this.aofManager = null;
-        this.rdbManager = null;
+        
+        // 3. 初始化Redis核心组件
+        this.redisCore = new RedisCoreImpl(DEFAULT_DBCOUNT);
+        
+        // 4. 初始化RedisContext
+        this.redisContext = new RedisContextImpl(redisCore, null, null, host, port);
+        
+        // 5. 初始化持久化组件
         if(ENABLE_AOF){
-            this.aofManager = new AofManager(aofFileName, redisCore);
+            this.aofManager = new AofManager(aofFileName, redisContext);
             aofManager.load();
             Thread.sleep(500);
         }
+        
         if(ENABLE_RDB){
-            this.rdbManager = new RdbManager(redisCore,rdbFileName);
+            this.rdbManager = new RdbManager(redisContext, rdbFileName);
             boolean success = rdbManager.loadRdb();
             if(!success){
                 log.warn("RDB文件加载失败，可能是文件不存在或格式错误");
             }
             Thread.sleep(500);
         }
-        this.commandHandler = new RespCommandHandler(redisCore, aofManager);
+        
+        // 6. 更新RedisContext中的持久化组件
+        this.redisContext = new RedisContextImpl(redisCore, aofManager, rdbManager, host, port);
+        
+        // 7. 初始化命令处理器
+        this.commandHandler = new RespCommandHandler(redisContext);
     }
-
 
     @Override
     public void start() {
@@ -99,17 +111,15 @@ public class RedisMiniServer implements RedisServer{
                 .childOption(ChannelOption.SO_KEEPALIVE, true)
                 .childOption(ChannelOption.TCP_NODELAY, true)
                 .childOption(ChannelOption.SO_RCVBUF, 32 * 1024)
-                .childOption(ChannelOption.SO_SNDBUF, 32 * 1024)                .childHandler(new ChannelInitializer<SocketChannel>() {
+                .childOption(ChannelOption.SO_SNDBUF, 32 * 1024)
+                .childHandler(new ChannelInitializer<SocketChannel>() {
                     @Override
                     protected void initChannel(SocketChannel ch) throws Exception {
                         ChannelPipeline pipeline = ch.pipeline();
-                        // 1. 首先添加解码器
-                        pipeline.addLast("decoder", new RespDecoder());
-                        // 2. 然后添加编码器
-                        pipeline.addLast("encoder", new RespEncoder());
-                        // 3. 最后添加业务处理器
-                        pipeline.addLast(commandExecutor, "commandHandler",
-                            new RespCommandHandler(redisCore, aofManager, redisNode));
+                        pipeline.addLast(new RespDecoder());
+                        pipeline.addLast(commandExecutor);
+                        pipeline.addLast(commandHandler);
+                        pipeline.addLast(new RespEncoder());
                     }
                 });
         try {
@@ -134,6 +144,9 @@ public class RedisMiniServer implements RedisServer{
             if(bossGroup != null){
                 bossGroup.shutdownGracefully().sync();
             }
+            if(commandExecutor != null) {
+                commandExecutor.shutdown();
+            }
             if(aofManager != null){
                 aofManager.close();
             }
@@ -146,8 +159,6 @@ public class RedisMiniServer implements RedisServer{
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
-
-
     }
 
     @Override
@@ -172,8 +183,8 @@ public class RedisMiniServer implements RedisServer{
         this.redisNode = redisNode;
         if (this.redisNode != null) {
             this.redisNode.setRedisServer(this);
-            if (this.commandHandler != null) {
-                this.commandHandler.setRedisNode(this.redisNode);
+            if (this.redisContext != null) {
+                this.redisContext.setRedisNode(redisNode);
             }
         }
     }
@@ -218,8 +229,18 @@ public class RedisMiniServer implements RedisServer{
     private void initializeCommandExecutor() {
         final String threadNamePrefix = "redis-cmd-single";
         log.info("使用单线程CommandExecutor，确保命令串行执行");
-
+        
         this.commandExecutor = new DefaultEventExecutorGroup(1,
             new DefaultThreadFactory(threadNamePrefix));
+    }
+
+    @Override
+    public RedisContext getRedisContext() {
+        return redisContext;
+    }
+
+    @Override
+    public RedisCore getRedisCore() {
+        return redisCore;
     }
 }

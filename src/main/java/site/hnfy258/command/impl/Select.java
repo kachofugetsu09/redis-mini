@@ -6,14 +6,15 @@ import site.hnfy258.protocal.BulkString;
 import site.hnfy258.protocal.Errors;
 import site.hnfy258.protocal.Resp;
 import site.hnfy258.protocal.RespInteger;
+import site.hnfy258.server.context.RedisContext;
 import site.hnfy258.server.core.RedisCore;
 
 public class Select implements Command {
-    private RedisCore redisCore;
+    private RedisContext redisContext;  // 新增：RedisContext支持
     private int dbIndex;
 
-    public Select(RedisCore redisCore) {
-        this.redisCore = redisCore;
+    public Select(RedisContext redisContext) {
+        this.redisContext = redisContext;
     }
     @Override
     public CommandType getType() {
@@ -33,7 +34,7 @@ public class Select implements Command {
     @Override
     public Resp handle() {
         try{
-            redisCore.selectDB(dbIndex);
+            redisContext.selectDB(dbIndex);
             return new RespInteger(1);
         }catch(Exception e){
             return new Errors("参数错误");

@@ -8,19 +8,20 @@ import site.hnfy258.protocal.BulkString;
 import site.hnfy258.protocal.Errors;
 import site.hnfy258.protocal.Resp;
 import site.hnfy258.protocal.RespInteger;
+import site.hnfy258.server.context.RedisContext;
 import site.hnfy258.server.core.RedisCore;
 
 import java.util.ArrayList;
 import java.util.List;
 
 public class Zadd implements Command {
-    private RedisCore redisCore;
+    private RedisContext redisContext;
     private RedisBytes key;
     private List<Double> scores;
     private List<Object> members;
 
-    public Zadd(RedisCore redisCore) {
-        this.redisCore = redisCore;
+    public Zadd(RedisContext redisContext) {
+        this.redisContext = redisContext;
     }
     @Override
     public CommandType getType() {
@@ -48,10 +49,10 @@ public class Zadd implements Command {
     @Override
     public Resp handle() {
         try{
-            RedisZset zset = (RedisZset) redisCore.get(key);
+            RedisZset zset = (RedisZset) redisContext.get(key);
             if(zset == null){
                 zset = new RedisZset();
-                redisCore.put(key,zset);
+                redisContext.put(key,zset);
             }
             int count=0;
             for(int i=0;i<scores.size();i++){

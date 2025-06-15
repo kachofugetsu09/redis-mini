@@ -9,6 +9,7 @@ import site.hnfy258.datastructure.RedisString;
 import site.hnfy258.protocal.BulkString;
 import site.hnfy258.protocal.Resp;
 import site.hnfy258.protocal.RespInteger;
+import site.hnfy258.server.context.RedisContext;
 import site.hnfy258.server.core.RedisCore;
 
 /**
@@ -26,10 +27,10 @@ import site.hnfy258.server.core.RedisCore;
 @Slf4j
 public class Strlen implements Command {
     private RedisBytes key;
-    private RedisCore redisCore;
+    private RedisContext redisContext;
 
-    public Strlen(RedisCore redisCore) {
-        this.redisCore = redisCore;
+    public Strlen(RedisContext redisContext) {
+        this.redisContext = redisContext;
     }
 
     @Override
@@ -47,7 +48,7 @@ public class Strlen implements Command {
 
     @Override
     public Resp handle() {
-        RedisData data = redisCore.get(key);
+        RedisData data = redisContext.get(key);
         
         if (data == null) {
             // 键不存在，返回0

@@ -18,13 +18,13 @@ import site.hnfy258.protocal.BulkString;
 import site.hnfy258.protocal.Resp;
 import site.hnfy258.protocal.RespArray;
 import site.hnfy258.server.RedisServer;
+import site.hnfy258.server.context.RedisContext;
 import site.hnfy258.server.core.RedisCore;
 import site.hnfy258.server.handler.RespDecoder;
 import site.hnfy258.server.handler.RespEncoder;
 
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Future;
 
 @Getter
 @Setter
@@ -50,14 +50,18 @@ public class RedisNode {
                      String nodeId) {
         this.redisServer = redisServer;
         this.commandExecutor = new DefaultEventExecutorGroup(1, new DefaultThreadFactory("redis-ms"));
-        this.nodeState = new NodeState(nodeId,host,port,isMaster);
-
-        if(redisServer !=null){
+        this.nodeState = new NodeState(nodeId,host,port,isMaster);        if(redisServer !=null){
             this.redisCore = redisServer.getRedisCore();
         }
 
         this.replicationStateMachine = new ReplicationStateMachine();
-        this.replicationManager = new ReplicationManager(this);
+        // 需要先设置redisServer才能获取RedisContext
+        if (redisServer != null) {
+            this.replicationManager = new ReplicationManager(redisServer.getRedisContext(), this);
+        } else {
+            // 如果没有redisServer，延迟初始化replicationManager
+            this.replicationManager = null;
+        }
         this.heartbeatManager = new HeartbeatManager(this);
     }
 
@@ -120,9 +124,7 @@ public class RedisNode {
 
     public int getMasterPort() {
         return nodeState.getMasterPort();
-    }
-
-    public String getNodeId() {
+    }    public String getNodeId() {
         return nodeState.getNodeId();
     }
 
@@ -316,10 +318,42 @@ public class RedisNode {
 
     public Resp doPartialSync(ChannelHandlerContext ctx, String masterId, long offset) {
         return replicationManager.doPartialSync(ctx, masterId, offset);
+    }    public void propagateCommand(byte[] commandBytes) {
+        replicationManager.propagateCommand(commandBytes);
     }
 
-    public void propagateCommand(byte[] commandBytes) {
-        replicationManager.propagateCommand(commandBytes);
+    /**
+     * 获取RedisContext，通过RedisServer获取
+     */
+    public RedisContext getRedisContext() {
+        if (redisServer == null) {
+            throw new IllegalStateException("RedisServer is not set, cannot get RedisContext");
+        }
+        return redisServer.getRedisContext();
+    }
 
+    /**
+     * 确保ReplicationManager被正确初始化
+     * 在RedisServer设置后调用此方法
+     */
+    public void ensureReplicationManagerInitialized() {
+        if (this.replicationManager == null && this.redisServer != null) {
+            log.info("延迟初始化ReplicationManager，节点: {}", getNodeId());
+            this.replicationManager = new ReplicationManager(redisServer.getRedisContext(), this);
+        }
+    }
+
+    /**
+     * 设置RedisServer并确保相关组件初始化
+     * 
+     * @param redisServer Redis服务器实例
+     */
+    public void setRedisServer(RedisServer redisServer) {
+        this.redisServer = redisServer;
+        if (redisServer != null) {
+            this.redisCore = redisServer.getRedisCore();
+            // 确保ReplicationManager被正确初始化
+            ensureReplicationManagerInitialized();
+        }
     }
 }

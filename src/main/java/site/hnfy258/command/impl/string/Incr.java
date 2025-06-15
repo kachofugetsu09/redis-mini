@@ -11,6 +11,7 @@ import site.hnfy258.protocal.BulkString;
 import site.hnfy258.protocal.Errors;
 import site.hnfy258.protocal.Resp;
 import site.hnfy258.protocal.SimpleString;
+import site.hnfy258.server.context.RedisContext;
 import site.hnfy258.server.core.RedisCore;
 
 /**
@@ -24,10 +25,10 @@ import site.hnfy258.server.core.RedisCore;
 public class Incr implements Command {
     
     private RedisBytes key;
-    private final RedisCore redisCore;
+    private RedisContext redisContext;
 
-    public Incr(final RedisCore redisCore) {
-        this.redisCore = redisCore;
+    public Incr(final RedisContext redisContext) {
+        this.redisContext = redisContext;
     }
 
     @Override
@@ -45,13 +46,13 @@ public class Incr implements Command {
     public Resp handle() {
         try {
             // 1. 获取或创建RedisString对象
-            RedisData redisData = redisCore.get(key);
+            RedisData redisData = redisContext.get(key);
             RedisString redisString;
             
             if (redisData == null) {
                 // 2. 键不存在，创建新的RedisString，值为0
                 redisString = new RedisString(new Sds("0".getBytes()));
-                redisCore.put(key, redisString);
+                redisContext.put(key, redisString);
             } else if (redisData instanceof RedisString) {
                 // 3. 键存在且为字符串类型
                 redisString = (RedisString) redisData;

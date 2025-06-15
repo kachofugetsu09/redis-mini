@@ -1,7 +1,7 @@
 package site.hnfy258.rdb;
 
 import lombok.extern.slf4j.Slf4j;
-import site.hnfy258.server.core.RedisCore;
+import site.hnfy258.server.context.RedisContext;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -10,23 +10,37 @@ import java.util.UUID;
 
 @Slf4j
 public class RdbManager {
-    private RedisCore redisCore;
     private String fileName = RdbConstants.RDB_FILE_NAME;
     private RdbWriter writer;
     private RdbLoader loader;
+    
+    // 核心依赖：统一使用RedisContext
+    private final RedisContext redisContext;
 
-    public RdbManager(RedisCore redisCore) {
-        this.redisCore = redisCore;
-        this.writer = new RdbWriter(redisCore);
-        this.loader = new RdbLoader(redisCore);
+    /**
+     * 新增构造函数：支持RedisContext的版本
+     * 这是为了逐步迁移到统一上下文模式，解决循环依赖问题
+     * 
+     * @param redisContext Redis统一上下文，提供所有核心功能的访问接口
+     */
+    public RdbManager(final RedisContext redisContext) {
+        this(redisContext, RdbConstants.RDB_FILE_NAME);
     }
 
-    public RdbManager(RedisCore redisCore, String fileName) {
-        this.redisCore = redisCore;
-        this.writer = new RdbWriter(redisCore);
-        this.loader = new RdbLoader(redisCore);
+    /**
+     * 新增构造函数：支持RedisContext的完整版本
+     * 
+     * @param redisContext Redis统一上下文
+     * @param fileName RDB文件名
+     */    public RdbManager(final RedisContext redisContext, final String fileName) {
+        this.redisContext = redisContext;
         this.fileName = fileName;
-    }
+        
+        // 1. 初始化RDB相关组件
+        this.writer = new RdbWriter(redisContext);
+        this.loader = new RdbLoader(redisContext);
+        
+        log.info("RdbManager使用RedisContext模式初始化完成，文件: {}", fileName);    }
 
     public boolean saveRdb() {
         return writer.writeRdb(fileName);

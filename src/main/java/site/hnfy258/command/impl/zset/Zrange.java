@@ -10,6 +10,7 @@ import site.hnfy258.protocal.BulkString;
 import site.hnfy258.protocal.Errors;
 import site.hnfy258.protocal.Resp;
 import site.hnfy258.protocal.RespArray;
+import site.hnfy258.server.context.RedisContext;
 import site.hnfy258.server.core.RedisCore;
 
 import java.util.ArrayList;
@@ -17,14 +18,14 @@ import java.util.Collections;
 import java.util.List;
 
 public class Zrange implements Command {
-    private  RedisCore redisCore;
+    private RedisContext redisContext;
     private RedisBytes key;
     private int start;
     private int stop;
     private boolean withScores = false;
 
-    public Zrange(RedisCore redisCore) {
-        this.redisCore = redisCore;
+    public Zrange(RedisContext redisContext) {
+        this.redisContext = redisContext;
     }
 
     @Override
@@ -54,7 +55,7 @@ public class Zrange implements Command {
     public Resp handle() {
         try{
             // 检查key是否存在
-            RedisData data = redisCore.get(key);
+            RedisData data = redisContext.get(key);
             if(data == null) return new RespArray(new Resp[0]);
 
             // 检查类型

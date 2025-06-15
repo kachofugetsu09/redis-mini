@@ -36,6 +36,16 @@ public class RedisDB {
         return data.get(key);
     }
 
+    /**
+     * 删除指定键的数据
+     * 
+     * @param key 要删除的键
+     * @return 删除的值，如果键不存在则返回null
+     */
+    public RedisData delete(RedisBytes key) {
+        return data.remove(key);
+    }
+
     public int size(){
         return data.size();
     }

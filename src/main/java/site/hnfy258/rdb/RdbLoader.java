@@ -1,16 +1,27 @@
 package site.hnfy258.rdb;
 
 import lombok.extern.slf4j.Slf4j;
-import site.hnfy258.server.core.RedisCore;
+import site.hnfy258.server.context.RedisContext;
 
 import java.io.*;
 
+/**
+ * RDB加载器 - 负责从RDB文件加载Redis数据
+ * 
+ * <p>重构说明：原依赖RedisCore，现改为依赖RedisContext，实现彻底解耦</p>
+ */
 @Slf4j
 public class RdbLoader {
-    private RedisCore redisCore;
+    // ========== 核心依赖：使用RedisContext替代RedisCore ==========
+    private final RedisContext redisContext;
 
-    public RdbLoader(RedisCore redisCore) {
-        this.redisCore = redisCore;
+    /**
+     * 构造函数：基于RedisContext的解耦架构
+     * 
+     * @param redisContext Redis统一上下文
+     */
+    public RdbLoader(RedisContext redisContext) {
+        this.redisContext = redisContext;
     }
 
     public boolean loadRdb(File file){
@@ -40,26 +51,25 @@ public class RdbLoader {
             if(type == -1 || (byte)type == RdbConstants.RDB_OPCODE_EOF){
                 break;
             }
-            switch((byte)type){
-                case RdbConstants.RDB_OPCODE_SELECTDB:
+            switch((byte)type){                case RdbConstants.RDB_OPCODE_SELECTDB:
                     currentDbIndex = dis.read();
-                    redisCore.selectDB(currentDbIndex);
+                    redisContext.getRedisCore().selectDB(currentDbIndex);
                     log.info("选择数据库: {}", currentDbIndex);
                     break;
                 case RdbConstants.STRING_TYPE:
-                    RdbUtils.loadString(dis, redisCore,currentDbIndex);
+                    RdbUtils.loadString(dis, redisContext.getRedisCore(), currentDbIndex);
                     break;
                 case RdbConstants.LIST_TYPE:
-                    RdbUtils.loadList(dis, redisCore,currentDbIndex);
+                    RdbUtils.loadList(dis, redisContext.getRedisCore(), currentDbIndex);
                     break;
                 case RdbConstants.SET_TYPE:
-                    RdbUtils.loadSet(dis, redisCore,currentDbIndex);
+                    RdbUtils.loadSet(dis, redisContext.getRedisCore(), currentDbIndex);
                     break;
                 case RdbConstants.HASH_TYPE:
-                    RdbUtils.loadHash(dis, redisCore,currentDbIndex);
+                    RdbUtils.loadHash(dis, redisContext.getRedisCore(), currentDbIndex);
                     break;
                 case RdbConstants.ZSET_TYPE:
-                    RdbUtils.loadZSet(dis, redisCore,currentDbIndex);
+                    RdbUtils.loadZSet(dis, redisContext.getRedisCore(), currentDbIndex);
                     break;
 
                 default:

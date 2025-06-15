@@ -10,6 +10,7 @@ import site.hnfy258.protocal.BulkString;
 import site.hnfy258.protocal.Errors;
 import site.hnfy258.protocal.Resp;
 import site.hnfy258.protocal.RespInteger;
+import site.hnfy258.server.context.RedisContext;
 import site.hnfy258.server.core.RedisCore;
 
 import java.util.List;
@@ -17,11 +18,11 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 @Slf4j
 public class Srem implements Command {
-    private RedisCore redisCore;
+    private RedisContext redisContext;
     private RedisBytes key;
     private List<RedisBytes> members;
-    public Srem(RedisCore redisCore) {
-        this.redisCore = redisCore;
+    public Srem(RedisContext redisContext) {
+        this.redisContext = redisContext;
     }
     @Override
     public CommandType getType() {
@@ -36,7 +37,7 @@ public class Srem implements Command {
 
     @Override
     public Resp handle() {
-        RedisData redisData = redisCore.get(key);
+        RedisData redisData = redisContext.get(key);
         if(redisData == null) return new Errors("ERR no such key");
         int count=0;
         if(redisData instanceof RedisSet){

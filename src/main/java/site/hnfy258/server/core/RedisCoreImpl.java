@@ -3,25 +3,33 @@ package site.hnfy258.server.core;
 import site.hnfy258.database.RedisDB;
 import site.hnfy258.datastructure.RedisBytes;
 import site.hnfy258.datastructure.RedisData;
-import site.hnfy258.server.RedisMiniServer;
 import site.hnfy258.server.RedisServer;
 
-import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 
-public class RedisCoreImpl implements RedisCore{
+/**
+ * Redis核心数据操作实现类
+ * 
+ * 注意：已移除与RedisServer的循环依赖，现在只负责纯数据操作
+ * 
+ * @author hnfy258
+ * @since 1.0
+ */
+public class RedisCoreImpl implements RedisCore {
     private final List<RedisDB> databases;
-    private RedisServer server;
-
     private final int dbNum;
-    private int currentDBIndex =0;
+    private int currentDBIndex = 0;
 
-    public RedisCoreImpl(int dbNum,RedisServer server) {
+    /**
+     * 构造函数：初始化指定数量的数据库
+     * 
+     * @param dbNum 数据库数量
+     */
+    public RedisCoreImpl(final int dbNum) {
         this.dbNum = dbNum;
-        this.server = server;
         this.databases = new java.util.ArrayList<>(dbNum);
-        for(int i =0; i < dbNum; i++){
+        for (int i = 0; i < dbNum; i++) {
             databases.add(new RedisDB(i));
         }
     }
@@ -71,24 +79,23 @@ public class RedisCoreImpl implements RedisCore{
     }
 
     @Override
-    public RedisDB[] getDataBases() {
-        return databases.toArray(new RedisDB[0]);
-    }
-
-    @Override
-    public RedisServer getServer() {
-        return server;
+    public RedisDB[] getDataBases() {        return databases.toArray(new RedisDB[0]);
     }
 
     @Override
     public void flushAll() {
-        for(RedisDB db : databases){
+        for (RedisDB db : databases) {
             db.clear();
         }
     }
 
     @Override
-    public void setServer(RedisMiniServer server) {
-        this.server = server;
+    public boolean delete(RedisBytes key) {
+        RedisDB db = databases.get(getCurrentDBIndex());
+        if (db.exist(key)) {
+            db.delete(key);
+            return true;
+        }
+        return false;
     }
 }

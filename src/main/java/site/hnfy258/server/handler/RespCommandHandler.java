@@ -6,7 +6,6 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
-import site.hnfy258.aof.AofManager;
 import site.hnfy258.cluster.node.RedisNode;
 import site.hnfy258.command.Command;
 import site.hnfy258.command.CommandType;
@@ -16,37 +15,34 @@ import site.hnfy258.protocal.BulkString;
 import site.hnfy258.protocal.Errors;
 import site.hnfy258.protocal.Resp;
 import site.hnfy258.protocal.RespArray;
-import site.hnfy258.server.core.RedisCore;
+import site.hnfy258.server.context.RedisContext;
 
 @Slf4j
 @Getter
 public class RespCommandHandler extends SimpleChannelInboundHandler<Resp> {
-    private AofManager aofManager;
-    private final RedisCore redisCore;
-    private RedisNode redisNode;
-    private boolean isMaster = false;
+    
+    // ========== 核心组件：统一使用RedisContext ==========
+    private final RedisContext redisContext;
+    
+    // ========== 系统状态 ==========
+    private final boolean isMaster;
 
-    // 重用的ByteBuf，用于命令传播
+    // ========== 性能优化：重用的ByteBuf ==========
     private static final ThreadLocal<ByteBuf> propagationBuf = ThreadLocal.withInitial(() ->
         Unpooled.buffer(4096)
-    );
-
-    public RespCommandHandler(RedisCore redisCore, AofManager aofManager, boolean isMaster) {
-        this.redisCore = redisCore;
-        this.aofManager = aofManager;
-        this.isMaster = isMaster;
+    );    /**
+     * 构造函数：基于RedisContext的解耦架构
+     * 
+     * @param redisContext Redis统一上下文，提供所有核心功能的访问接口
+     */
+    public RespCommandHandler(final RedisContext redisContext) {
+        this.redisContext = redisContext;
+        this.isMaster = redisContext.isMaster();
+        
+        log.info("RespCommandHandler初始化完成 - 模式: {}", 
+                isMaster ? "主节点" : "从节点");
     }
-
-    public RespCommandHandler(RedisCore redisCore, AofManager aofManager) {
-        this.redisCore = redisCore;
-        this.aofManager = aofManager;
-    }
-
-    public RespCommandHandler(RedisCore redisCore, AofManager aofManager, RedisNode redisNode) {
-        this.redisCore = redisCore;
-        this.aofManager = aofManager;
-        this.redisNode = redisNode;
-    }
+    
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, Resp msg) throws Exception {
         if(msg instanceof RespArray){
@@ -96,51 +92,27 @@ public class RespCommandHandler extends SimpleChannelInboundHandler<Resp> {
                     break;
                 }
             }
-            
             if (commandType == null) {
                 return new Errors("命令不存在");
-            }            // 使用命令对象池获取Command实例
-            Command command = commandType.createCommand(redisCore);
+            }
+            
+            // 1. 使用RedisContext创建命令（解耦架构）
+            final Command command = commandType.createCommand(redisContext);
             command.setContext(array);
 
-
+            // 2. 特殊处理PSYNC命令
             if(command instanceof Psync){
                 ((Psync)command).setChannelHandlerContext(ctx);
-                if(this.redisNode !=null && this.redisNode.isMaster()){
-                    ((Psync)command).setMasterNode(this.redisNode);
+                final RedisNode masterNode = redisContext.getRedisNode();
+                if(masterNode != null && masterNode.isMaster()){
+                    ((Psync)command).setMasterNode(masterNode);
                 }
                 log.info("执行PSYNC命令，来自：{}", ctx.channel().remoteAddress());
-            }
+            }            final Resp result = command.handle();
 
-            Resp result = command.handle();
-
-
-            // 写命令处理：AOF持久化 + 主从复制传播
+            // 3. 写命令处理：AOF持久化 + 主从复制传播
             if(command.isWriteCommand()){
-                // AOF持久化
-                if(aofManager != null){
-                    aofManager.append(respArray);
-                }
-                
-                // 主从复制：如果是主节点，则自动传播命令给从节点
-                if(redisNode != null && redisNode.isMaster()){
-                    ByteBuf buf = null;
-                    try {
-                        // 重用ByteBuf进行命令编码
-                        buf = propagationBuf.get();
-                        buf.clear();
-                        respArray.encode(respArray, buf);
-                        
-                        // 获取可读字节，不创建新的数组
-                        byte[] commandBytes = new byte[buf.readableBytes()];
-                        buf.getBytes(buf.readerIndex(), commandBytes);
-                        
-                        redisNode.propagateCommand(commandBytes);
-                        log.debug("[主节点] 写命令已传播: {} ({} bytes)", commandType, commandBytes.length);
-                    } catch (Exception e) {
-                        log.error("[主节点] 命令传播失败，命令: {}, 错误: {}", commandType, e.getMessage(), e);
-                    }
-                }
+                handleWriteCommand(respArray, commandType);
             }
 
             return result;
@@ -149,9 +121,46 @@ public class RespCommandHandler extends SimpleChannelInboundHandler<Resp> {
             return new Errors("命令执行失败");
         }
     }
-
-    public void setRedisNode(RedisNode redisNode) {
-        this.redisNode = redisNode;
+    
+    /**
+     * 处理写命令的持久化和复制
+     * 
+     * @param respArray 命令数组
+     * @param commandType 命令类型
+     */
+    private void handleWriteCommand(final RespArray respArray, final CommandType commandType) {
+        // 1. AOF持久化
+        if(redisContext.isAofEnabled()){
+            try {
+                ByteBuf buf = propagationBuf.get();
+                buf.clear();
+                respArray.encode(respArray, buf);
+                
+                byte[] commandBytes = new byte[buf.readableBytes()];
+                buf.getBytes(buf.readerIndex(), commandBytes);
+                
+                redisContext.writeAof(commandBytes);
+                log.debug("[AOF] 写命令已持久化: {}", commandType);
+            } catch (Exception e) {
+                log.error("[AOF] 持久化失败，命令: {}, 错误: {}", commandType, e.getMessage(), e);
+            }
+        }
+        
+        // 2. 主从复制：如果是主节点，则自动传播命令给从节点
+        if(redisContext.isMaster()){
+            try {
+                ByteBuf buf = propagationBuf.get();
+                buf.clear();
+                respArray.encode(respArray, buf);
+                
+                byte[] commandBytes = new byte[buf.readableBytes()];
+                buf.getBytes(buf.readerIndex(), commandBytes);
+                
+                redisContext.propagateCommand(commandBytes);
+                log.debug("[主节点] 写命令已传播: {} ({} bytes)", commandType, commandBytes.length);
+            } catch (Exception e) {
+                log.error("[主节点] 命令传播失败，命令: {}, 错误: {}", commandType, e.getMessage(), e);
+            }        }
     }
 
     @Override

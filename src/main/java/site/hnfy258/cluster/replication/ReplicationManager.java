@@ -12,99 +12,93 @@ import site.hnfy258.cluster.replication.utils.ReplicationUtils;
 import site.hnfy258.protocal.Errors;
 import site.hnfy258.protocal.Resp;
 import site.hnfy258.rdb.RdbManager;
-import site.hnfy258.server.RedisServer;
-
-import java.net.InetSocketAddress;
+import site.hnfy258.server.context.RedisContext;
 
 @Slf4j
 @Setter
 @Getter
-public class ReplicationManager {
-    private RedisNode node;
-    private RedisServer redisServer;
-    private ReplicationTransfer transfer;
+public class ReplicationManager {    private final RedisNode node;
+    private final ReplicationTransfer transfer;
+    private final RedisContext redisContext;
 
-    public ReplicationManager(RedisNode node) {
+      /**
+     * 构造函数：使用RedisContext的统一模式
+     * 
+     * @param redisContext Redis统一上下文，提供所有核心功能的访问接口
+     * @param node Redis节点实例
+     */
+    public ReplicationManager(final RedisContext redisContext, final RedisNode node) {
+        this.redisContext = redisContext;
         this.node = node;
-        this.redisServer = node.getRedisServer();
         this.transfer = new ReplicationTransfer(node);
+        
+        log.info("ReplicationManager初始化完成，节点: {}", 
+                node != null ? node.getNodeId() : "null");
     }
-
-    public Resp doFullSync(ChannelHandlerContext ctx){
-        if(!node.isMaster()){
+    public Resp doFullSync(final ChannelHandlerContext ctx) {
+        if (!node.isMaster()) {
             return new Errors("不是主节点，无法执行全量同步");
         }
 
-        String remoteAddress = ReplicationUtils.getRemoteAddress(ctx);
-        log.info("开始全量同步，来自: {}", remoteAddress);
-        try{
-            //1.生成rdb数据
-            byte[] rdbContent = transfer.generateRdbData(redisServer.getRdbManager());
+        final String remoteAddress = ReplicationUtils.getRemoteAddress(ctx);
+        log.info("开始全量同步，来自: {}", remoteAddress);        try {
+            // 1. 生成RDB数据（支持新旧两种模式）
+            final byte[] rdbContent = generateRdbData();
+            if (rdbContent.length == 0) {
+                log.error("RDB数据生成失败，全量同步终止");
+                return new Errors("RDB数据生成失败");
+            }
 
-            //2.更新主节点偏移量
-            updateMasterOffset(rdbContent.length);
+            // 2. 获取当前主节点偏移量
+            long currentMasterOffset = node.getNodeState().getMasterReplicationOffset();
+            
+            // 3. 发送同步数据 - 使用主节点当前偏移量
+            transfer.sendFullSyncData(ctx, rdbContent, node.getNodeId(), currentMasterOffset);
 
-            //3.发送同步数据 - 使用偏移量0，符合Redis规范
-            transfer.sendFullSyncData(ctx,rdbContent, node.getNodeId(), 0);
-
-            //4.更新从节点状态
-            updateSlaveStateAfterSync(ctx,rdbContent.length);
+            // 4. 更新从节点状态
+            updateSlaveStateAfterSync(ctx, rdbContent.length);
 
             return null;
         }catch(Exception e){
             log.error("全量同步失败", e);
             return new Errors("全量同步失败: " + e.getMessage());
         }
-    }
-
-    private void updateSlaveStateAfterSync(ChannelHandlerContext ctx, int length) {
+    }    private void updateSlaveStateAfterSync(ChannelHandlerContext ctx, int length) {
         RedisNode slaveNode = findSlaveNodeForConnection(ctx);
-        if(slaveNode != null){
-            updateSlaveNodeAfterSync(slaveNode,ctx,length);
+        if(slaveNode != null){            
+            updateSlaveNodeAfterFullSync(slaveNode, ctx, length);
         }
-    }    private void updateSlaveNodeAfterSync(RedisNode slaveNode, ChannelHandlerContext ctx, int length) {
-        slaveNode.getNodeState().setChannel(ctx.channel());
-        slaveNode.getNodeState().setConnected(true);
-        // 1. 符合Redis规范：全量同步后从节点偏移量从0开始
-        // 2. RDB文件大小不计入复制偏移量
-        long currentOffset = slaveNode.getNodeState().getReplicationOffset();
-        slaveNode.getNodeState().setReplicationOffset(currentOffset);
-        slaveNode.getNodeState().setReadyForReplCommands(true);
-        log.info("从节点 {} 全量同步后偏移量设为: 0 (RDB文件大小 {} 字节不计入偏移量)", 
-                slaveNode.getNodeId(), length);
-    }
-
-    private RedisNode findSlaveNodeForConnection(ChannelHandlerContext ctx) {
-        try{
-            InetSocketAddress socketAddress = (InetSocketAddress) ctx.channel().remoteAddress();
-            String remoteHost = socketAddress.getHostString();
-            if(remoteHost.startsWith("/")){
-                remoteHost = remoteHost.substring(1);
-            }
-
-            for(RedisNode slave : node.getSlaves()){
-                if(slave.getChannel() == null || !slave.getChannel().isActive()) {
+    }    private RedisNode findSlaveNodeForConnection(ChannelHandlerContext ctx) {
+        try {
+            // 1. 首先尝试通过通道精确匹配
+            for (RedisNode slave : node.getSlaves()) {
+                if (slave.getChannel() != null && slave.getChannel() == ctx.channel()) {
                     return slave;
                 }
             }
-        }catch(Exception e){
+            
+            // 2. 如果没有精确匹配，返回第一个未连接的从节点
+            for (RedisNode slave : node.getSlaves()) {
+                if (slave.getChannel() == null || !slave.getChannel().isActive()) {
+                    // 绑定新通道到此从节点
+                    slave.getNodeState().setChannel(ctx.channel());
+                    log.info("将新连接绑定到从节点: {}", slave.getNodeId());
+                    return slave;
+                }
+            }
+        } catch (Exception e) {
             log.error("查找从节点失败", e);
         }
         return null;
-    }
-    private void updateMasterOffset(int length) {
-        long currentOffset = node.getNodeState().getMasterReplicationOffset();
-        log.info("主节点 {} 当前偏移量: {}", node.getNodeId(), currentOffset);
     }
 
     public boolean receiveAndLoadRdb(byte[] rdbData) {
         if(node.isMaster()){
             log.error("主节点不应该接收RDB数据");
             return false;
-        }
-        try{
+        }        try{
             String tempRdbFile = "temp-slave-" + System.currentTimeMillis() + ".rdb";
-            RdbManager rdbManager = new RdbManager(node.getRedisCore(), tempRdbFile);
+            RdbManager rdbManager = new RdbManager(node.getRedisContext(), tempRdbFile);
 
             boolean success = transfer.receiveAndLoadRdb(rdbData,rdbManager);
             if(success){
@@ -158,13 +152,11 @@ public class ReplicationManager {
             }
 
             // 4. 发送增量命令
-            transfer.sendPartialSyncData(ctx, commands, node.getNodeId());
-
-            // 5. 更新从节点状态
+            transfer.sendPartialSyncData(ctx, commands, node.getNodeId());            // 5. 更新从节点状态 - 部分重同步专用方法
             RedisNode slaveNode = findSlaveNodeForConnection(ctx);
             if (slaveNode != null) {
-                updateSlaveNodeAfterSync(slaveNode, ctx, (int)offset);
-                log.info("从节点 {} 状态更新成功，偏移量: {}", slaveNode.getNodeId(), offset);
+                updateSlaveNodeAfterPartialSync(slaveNode, ctx, node.getNodeState().getMasterReplicationOffset());
+                log.info("从节点 {} 部分重同步状态更新成功，偏移量: {}", slaveNode.getNodeId(), node.getNodeState().getMasterReplicationOffset());
             } else {
                 log.warn("未找到对应的从节点对象，无法更新节点状态");
             }
@@ -272,7 +264,7 @@ public class ReplicationManager {
         try {
             // 创建临时RDB管理器
             String tempRdbFile = "temp-slave-" + node.getNodeId() + "-" + System.currentTimeMillis() + ".rdb";
-            RdbManager rdbManager = new RdbManager(node.getRedisCore(), tempRdbFile);            // 接收并加载RDB数据
+            RdbManager rdbManager = new RdbManager(node.getRedisContext(), tempRdbFile);            // 接收并加载RDB数据
             boolean success = transfer.receiveAndLoadRdb(rdbContent, rdbManager);
             if (success) {
                 log.debug("从节点 {} 成功加载RDB数据，偏移量将由ReplicationHandler设置", 
@@ -284,5 +276,81 @@ public class ReplicationManager {
             log.error("从节点 {} 处理RDB数据时发生错误: {}", node.getNodeId(), e.getMessage(), e);
             return false;
         }
+    }    /**
+     * 获取有效的RdbManager实例
+     * 
+     * @return RdbManager实例
+     */
+    private RdbManager getEffectiveRdbManager() {
+        if (redisContext != null && redisContext.isRdbEnabled()) {
+            return redisContext.getRdbManager();
+        }
+        
+        return null;
+    }
+    
+    /**
+     * 生成复制用的RDB数据
+     * 支持新旧两种模式的兼容性
+     * 
+     * @return RDB字节数组
+     */
+    private byte[] generateRdbData() {
+        // 1. 优先使用RedisContext模式
+        if (redisContext != null) {
+            return redisContext.createTempRdbForReplication();
+        }
+        
+        // 2. 回退到原有的直接引用模式
+        final RdbManager rdbManager = getEffectiveRdbManager();
+        if (rdbManager != null) {
+            return transfer.generateRdbData(rdbManager);
+        }
+        
+        log.error("无法生成RDB数据：RdbManager不可用");
+        return new byte[0];
+    }
+
+    /**
+     * 更新从节点状态 - 部分重同步专用
+     * 部分重同步后，从节点偏移量应该设置为主节点当前偏移量
+     * 
+     * @param slaveNode 从节点
+     * @param ctx 网络通道上下文
+     * @param masterCurrentOffset 主节点当前偏移量
+     */
+    private void updateSlaveNodeAfterPartialSync(RedisNode slaveNode, ChannelHandlerContext ctx, long masterCurrentOffset) {
+        slaveNode.getNodeState().setChannel(ctx.channel());
+        slaveNode.getNodeState().setConnected(true);
+        
+        // 1. 部分重同步后，从节点偏移量应该与主节点当前偏移量一致
+        slaveNode.getNodeState().setReplicationOffset(masterCurrentOffset);
+        slaveNode.getNodeState().setReadyForReplCommands(true);
+        
+        log.info("从节点 {} 部分重同步完成，偏移量设为: {} (与主节点当前偏移量一致)", 
+                slaveNode.getNodeId(), masterCurrentOffset);
+    }
+
+    /**
+     * 更新从节点状态 - 全量同步专用
+     * 全量同步后，从节点偏移量应该与主节点当前偏移量保持一致
+     * 
+     * @param slaveNode 从节点
+     * @param ctx 网络通道上下文  
+     * @param rdbLength RDB文件长度（不影响偏移量计算）
+     */
+    private void updateSlaveNodeAfterFullSync(RedisNode slaveNode, ChannelHandlerContext ctx, int rdbLength) {
+        slaveNode.getNodeState().setChannel(ctx.channel());
+        slaveNode.getNodeState().setConnected(true);
+        
+        // 1. 获取主节点当前偏移量
+        long masterOffset = node.getNodeState().getMasterReplicationOffset();
+        
+        // 2. 全量同步后，从节点偏移量应该与主节点当前偏移量一致
+        slaveNode.getNodeState().setReplicationOffset(masterOffset);
+        slaveNode.getNodeState().setReadyForReplCommands(true);
+        
+        log.info("从节点 {} 全量同步完成，偏移量设为: {} (与主节点当前偏移量一致)", 
+                slaveNode.getNodeId(), masterOffset);
     }
 }

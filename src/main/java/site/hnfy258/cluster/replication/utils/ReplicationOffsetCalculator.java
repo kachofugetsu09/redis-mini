@@ -59,20 +59,29 @@ public final class ReplicationOffsetCalculator {
 
         log.debug("偏移量验证通过，值: {}", correctOffset);
         return true;
-    }    public static long calculatePostRdbOffset(long masterBaseOffset, int length) {
-        if(masterBaseOffset <0){
+    }    /**
+     * 计算全量同步完成后的复制偏移量
+     * 
+     * @param masterBaseOffset 主节点传来的偏移量
+     * @param length RDB文件长度（不影响偏移量计算）
+     * @return 从节点应该设置的偏移量
+     */
+    public static long calculatePostRdbOffset(long masterBaseOffset, int length) {
+        if(masterBaseOffset < 0){
             log.warn("主节点偏移量不能为负数，当前值: {}", masterBaseOffset);
             return 0;
         }
 
-        if(length <0){
+        if(length < 0){
             log.warn("长度不能为负数，当前值: {}", length);
             return 0;
         }
         
-        // 1. 符合Redis规范：RDB文件大小不计入复制偏移量
-        // 2. 全量同步后，从节点偏移量应该为0，准备接收增量命令
-        log.debug("RDB数据处理完成，偏移量设为0 (RDB文件大小 {} 字节不计入偏移量)", length);
-        return 0;
+        // 1. 符合Redis规范：全量同步后从节点偏移量应该与主节点保持一致
+        // 2. RDB文件大小不计入复制偏移量，但从节点需要从主节点当前偏移量开始
+        // 3. 这样可以确保后续增量命令的连续性
+        log.debug("RDB数据处理完成，从节点偏移量设为: {} (与主节点保持一致，RDB文件大小 {} 字节不计入偏移量)", 
+                masterBaseOffset, length);
+        return masterBaseOffset;
     }
 }

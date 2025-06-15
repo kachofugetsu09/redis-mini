@@ -9,16 +9,17 @@ import site.hnfy258.protocal.BulkString;
 import site.hnfy258.protocal.Errors;
 import site.hnfy258.protocal.Resp;
 import site.hnfy258.protocal.RespInteger;
+import site.hnfy258.server.context.RedisContext;
 import site.hnfy258.server.core.RedisCore;
 
 public class Hset implements Command {
-    private RedisCore redisCore;
+    private RedisContext redisContext;
     private RedisBytes key;
     private RedisBytes field;
     private RedisBytes value;
 
-    public Hset(RedisCore redisCore) {
-        this.redisCore = redisCore;
+    public Hset(RedisContext redisContext) {
+        this.redisContext = redisContext;
     }
 
     @Override
@@ -41,17 +42,17 @@ public class Hset implements Command {
 
     @Override
     public Resp handle() {
-        RedisData redisData = redisCore.get(key);
+        RedisData redisData = redisContext.get(key);
         if(redisData == null){
             RedisHash hash = new RedisHash();
             int put = hash.put(field, value);
-            redisCore.put(key, hash);
+            redisContext.put(key, hash);
             return new RespInteger(put);
         }
         else if(redisData instanceof RedisHash){
             RedisHash hash = (RedisHash) redisData;
             int put = hash.put(field, value);
-            redisCore.put(key, hash);
+            redisContext.put(key, hash);
             return new RespInteger(put);
         }
         return new Errors("参数错误");

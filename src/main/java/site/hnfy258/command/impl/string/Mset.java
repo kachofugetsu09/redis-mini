@@ -8,8 +8,8 @@ import site.hnfy258.protocal.BulkString;
 import site.hnfy258.protocal.Errors;
 import site.hnfy258.protocal.Resp;
 import site.hnfy258.protocal.SimpleString;
+import site.hnfy258.server.context.RedisContext;
 import site.hnfy258.server.core.RedisBatchOptimizer;
-import site.hnfy258.server.core.RedisCore;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -25,10 +25,10 @@ import java.util.Map;
 public class Mset implements Command {
 
     private final Map<RedisBytes, RedisBytes> keyValuePairs = new LinkedHashMap<>();
-    private final RedisCore redisCore;
+    private RedisContext redisContext;
 
-    public Mset(final RedisCore redisCore) {
-        this.redisCore = redisCore;
+    public Mset(final RedisContext redisContext) {
+        this.redisContext = redisContext;
     }
 
     @Override
@@ -54,10 +54,10 @@ public class Mset implements Command {
     }
 
     @Override
-    public Resp handle() {
+    public Resp handle() {        
         try {
-            // 1. 使用批处理优化器进行批量设置
-            RedisBatchOptimizer.batchSetStrings(redisCore, keyValuePairs);
+            // 1. 使用批处理优化器进行批量设置，通过RedisContext获取RedisCore
+            RedisBatchOptimizer.batchSetStrings(redisContext.getRedisCore(), keyValuePairs);
             
             // 2. 返回成功响应
             return new SimpleString("OK");

@@ -10,6 +10,7 @@ import site.hnfy258.protocal.BulkString;
 import site.hnfy258.protocal.Errors;
 import site.hnfy258.protocal.Resp;
 import site.hnfy258.protocal.RespInteger;
+import site.hnfy258.server.context.RedisContext;
 import site.hnfy258.server.core.RedisCore;
 
 import java.util.ArrayList;
@@ -24,13 +25,13 @@ import java.util.List;
  */
 @Slf4j
 public class Rpush implements Command {
-    
-    private final RedisCore redisCore;
+
+    private RedisContext redisContext;
     private final List<RedisBytes> elements = new ArrayList<>();
     private RedisBytes key;
 
-    public Rpush(final RedisCore redisCore) {
-        this.redisCore = redisCore;
+    public Rpush(final RedisContext redisContext) {
+        this.redisContext = redisContext;
     }
 
     @Override
@@ -58,7 +59,7 @@ public class Rpush implements Command {
     public Resp handle() {
         try {
             // 1. 获取或创建列表
-            final RedisData redisData = redisCore.get(key);
+            final RedisData redisData = redisContext.get(key);
             final RedisList redisList;
 
             if (redisData == null) {
@@ -74,7 +75,7 @@ public class Rpush implements Command {
             redisList.rpush(elementArray);
             
             // 3. 保存列表
-            redisCore.put(key, redisList);
+            redisContext.put(key, redisList);
             
             // 4. 返回列表长度
             return new RespInteger(redisList.size());

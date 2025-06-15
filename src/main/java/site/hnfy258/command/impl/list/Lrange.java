@@ -10,6 +10,7 @@ import site.hnfy258.protocal.BulkString;
 import site.hnfy258.protocal.Errors;
 import site.hnfy258.protocal.Resp;
 import site.hnfy258.protocal.RespArray;
+import site.hnfy258.server.context.RedisContext;
 import site.hnfy258.server.core.RedisCore;
 
 import java.util.List;
@@ -23,14 +24,14 @@ import java.util.List;
  */
 @Slf4j
 public class Lrange implements Command {
-    
-    private final RedisCore redisCore;
+
+    private RedisContext redisContext;
     private RedisBytes key;
     private int start;
     private int stop;
 
-    public Lrange(final RedisCore redisCore) {
-        this.redisCore = redisCore;
+    public Lrange(final RedisContext redisContext) {
+        this.redisContext = redisContext;
     }
 
     @Override
@@ -57,7 +58,7 @@ public class Lrange implements Command {
     public Resp handle() {
         try {
             // 1. 获取列表数据
-            final RedisData redisData = redisCore.get(key);
+            final RedisData redisData = redisContext.get(key);
             
             if (redisData == null) {
                 // 2. 键不存在，返回空数组

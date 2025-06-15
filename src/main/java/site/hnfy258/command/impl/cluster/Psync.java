@@ -10,16 +10,26 @@ import site.hnfy258.protocal.BulkString;
 import site.hnfy258.protocal.Errors;
 import site.hnfy258.protocal.Resp;
 import site.hnfy258.server.core.RedisCore;
+import site.hnfy258.server.context.RedisContext;
 @Slf4j
 public class Psync implements Command {
-    private RedisCore redisCore;
+    private RedisContext redisContext;  // 新增：RedisContext支持
     private RedisNode masterNodeInstance;
     private String masterId;
     private long offset;
     private ChannelHandlerContext ctx;
 
-    public Psync(RedisCore redisCore) {
-        this.redisCore = redisCore;
+    
+    /**
+     * 新增构造函数：支持RedisContext的版本
+     * 这是为了逐步迁移到统一上下文模式，解决循环依赖问题
+     * 
+     * @param redisContext Redis统一上下文，提供所有核心功能的访问接口
+     */
+    public Psync(final RedisContext redisContext) {
+        this.redisContext = redisContext;
+        
+        log.debug("Psync命令使用RedisContext模式初始化");
     }
 
     @Override
@@ -47,37 +57,53 @@ public class Psync implements Command {
 
     public void setChannelHandlerContext(ChannelHandlerContext ctx) {
         this.ctx = ctx;
-    }
-
-    @Override
+    }    @Override
     public Resp handle() {
-        if(ctx == null){
+        if (ctx == null) {
             log.error("ChannelHandlerContext is not set for PSYNC command");
             return new Errors("ChannelHandlerContext is not set for PSYNC command");
         }
 
-        try{
+        try {
             RedisNode nodeToUse = this.masterNodeInstance;
 
-            if(nodeToUse == null) {
-                nodeToUse = redisCore.getServer().getRedisNode();
+            // 如果没有显式设置masterNodeInstance，尝试获取
+            if (nodeToUse == null) {
+                nodeToUse = getEffectiveRedisNode();
             }
-            if(nodeToUse == null || !nodeToUse.isMaster()) {
+            
+            if (nodeToUse == null || !nodeToUse.isMaster()) {
                 log.error("No master node available for PSYNC command");
                 return new Errors("No master node available for PSYNC command");
             }
 
-            if(masterId == null || offset == -1){
-                log.info("执行全量同步,从节点：{}",ctx.channel().remoteAddress());
+            if (masterId == null || offset == -1) {
+                log.info("执行全量同步,从节点：{}", ctx.channel().remoteAddress());
                 return nodeToUse.doFullSync(ctx);
-            }else{
-                //执行增量同步
+            } else {
+                // 执行增量同步
                 return nodeToUse.doPartialSync(ctx, masterId, offset);
             }
-        }catch(Exception e){
+        } catch (Exception e) {
             log.error("Error handling PSYNC command: {}", e.getMessage());
             return new Errors("Error handling PSYNC command: " + e.getMessage());
         }
+    }
+      /**
+     * 获取有效的RedisNode实例
+     * 支持新旧两种模式的兼容性，避免循环依赖
+     * 
+     * @return RedisNode实例，如果无法获取返回null
+     */    private RedisNode getEffectiveRedisNode() {
+        // 1. 优先使用RedisContext的直接接口（推荐）
+        if (redisContext != null) {
+            return redisContext.getRedisNode();
+        }
+        
+        // 2. RedisCore模式已移除循环依赖，无法再获取RedisNode
+        // 必须使用RedisContext模式或外部设置masterNodeInstance
+        log.warn("无法自动获取RedisNode，请确保使用RedisContext模式或手动设置masterNodeInstance");
+        return null;
     }
 
     @Override

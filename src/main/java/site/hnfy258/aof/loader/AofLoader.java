@@ -11,7 +11,7 @@ import site.hnfy258.protocal.BulkString;
 import site.hnfy258.protocal.Errors;
 import site.hnfy258.protocal.Resp;
 import site.hnfy258.protocal.RespArray;
-import site.hnfy258.server.core.RedisCore;
+import site.hnfy258.server.context.RedisContext;
 
 import java.io.File;
 import java.io.IOException;
@@ -21,17 +21,25 @@ import java.nio.channels.FileChannel;
 @Slf4j
 public class AofLoader {
     private final String fileName;
-    private final RedisCore redisCore;
+    private final RedisContext redisContext;
     private FileChannel channel;
     private RandomAccessFile raf;
     private static final int BUFFER_SIZE = 4096;
 
-    private static final byte[] REDIS_PREFIX = {'*', '$', '+', '-', ':'};    public AofLoader(final String fileName, final RedisCore redisCore) throws Exception {
-        this.fileName = fileName;
-        this.redisCore = redisCore;
-        openFile();
-    }
+    private static final byte[] REDIS_PREFIX = {'*', '$', '+', '-', ':'};
 
+    /**
+     * 构造函数：基于RedisContext的解耦架构
+     * 
+     * @param fileName AOF文件名
+     * @param redisContext Redis统一上下文
+     * @throws Exception 文件操作异常
+     */
+    public AofLoader(final String fileName, final RedisContext redisContext) throws Exception {
+        this.fileName = fileName;
+        this.redisContext = redisContext;
+        openFile();
+    }    
     /**
      * 安全打开文件
      */
@@ -139,9 +147,9 @@ public class AofLoader {
             } catch (IllegalArgumentException e) {
                 log.warn("未知命令类型: {} 在位置: {}", commandName, position);
                 return false;
-            }
-
-            final Command cmd = commandType.getSupplier().apply(redisCore);
+            }              // 1. 直接使用当前的RedisContext创建命令
+            // 这样确保AOF加载的数据存储到正确的数据库中
+            final Command cmd = commandType.createCommand(redisContext);
             cmd.setContext(command.getContent());
             cmd.handle();  // 执行命令，不需要保存结果
             return true;

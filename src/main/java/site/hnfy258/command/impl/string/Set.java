@@ -10,15 +10,15 @@ import site.hnfy258.internal.Sds;
 import site.hnfy258.protocal.BulkString;
 import site.hnfy258.protocal.Resp;
 import site.hnfy258.protocal.SimpleString;
-import site.hnfy258.server.core.RedisCore;
+import site.hnfy258.server.context.RedisContext;
 @Slf4j
 public class Set implements Command {
     private RedisBytes key;
     private RedisBytes value;
-    private RedisCore redisCore;
+    private RedisContext redisContext;
 
-    public Set(RedisCore redisCore) {
-        this.redisCore = redisCore;
+    public Set(RedisContext redisContext) {
+        this.redisContext = redisContext;
     }
     @Override
     public CommandType getType() {
@@ -36,15 +36,15 @@ public class Set implements Command {
 
     @Override
     public Resp handle() {
-        if(redisCore.get(key) != null){
-            RedisData data = redisCore.get(key);
+        if(redisContext.get(key) != null){
+            RedisData data = redisContext.get(key);
             if(data instanceof RedisString){
                 RedisString redisString = (RedisString) data;
                 redisString.setSds(new Sds(value.getBytes()));
                 return new SimpleString("OK");
             }
         }
-        redisCore.put(key, new RedisString(new Sds(value.getBytes())));
+        redisContext.put(key, new RedisString(new Sds(value.getBytes())));
 //        log.info("set key:{} value:{}", key, value);
 
         return new SimpleString("OK");
