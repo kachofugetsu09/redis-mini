@@ -45,7 +45,7 @@ public class RedisMiniServer implements RedisServer{
     private Channel serverChannel;
 
     public RespCommandHandler commandHandler;
-    private static final boolean ENABLE_AOF = true;
+    private static final boolean ENABLE_AOF = false;
     private AofManager aofManager;
     private static final boolean ENABLE_RDB = false;
     private RdbManager rdbManager;
@@ -99,14 +99,17 @@ public class RedisMiniServer implements RedisServer{
                 .childOption(ChannelOption.SO_KEEPALIVE, true)
                 .childOption(ChannelOption.TCP_NODELAY, true)
                 .childOption(ChannelOption.SO_RCVBUF, 32 * 1024)
-                .childOption(ChannelOption.SO_SNDBUF, 32 * 1024)
-                .childHandler(new ChannelInitializer<SocketChannel>() {
+                .childOption(ChannelOption.SO_SNDBUF, 32 * 1024)                .childHandler(new ChannelInitializer<SocketChannel>() {
                     @Override
                     protected void initChannel(SocketChannel ch) throws Exception {
                         ChannelPipeline pipeline = ch.pipeline();
-                        pipeline.addLast(new RespDecoder());
-                        pipeline.addLast(commandExecutor, new RespCommandHandler(redisCore, aofManager, redisNode));
-                        pipeline.addLast(new RespEncoder());
+                        // 1. 首先添加解码器
+                        pipeline.addLast("decoder", new RespDecoder());
+                        // 2. 然后添加编码器
+                        pipeline.addLast("encoder", new RespEncoder());
+                        // 3. 最后添加业务处理器
+                        pipeline.addLast(commandExecutor, "commandHandler",
+                            new RespCommandHandler(redisCore, aofManager, redisNode));
                     }
                 });
         try {
@@ -215,8 +218,8 @@ public class RedisMiniServer implements RedisServer{
     private void initializeCommandExecutor() {
         final String threadNamePrefix = "redis-cmd-single";
         log.info("使用单线程CommandExecutor，确保命令串行执行");
-        
-        this.commandExecutor = new DefaultEventExecutorGroup(1, 
+
+        this.commandExecutor = new DefaultEventExecutorGroup(1,
             new DefaultThreadFactory(threadNamePrefix));
     }
 }

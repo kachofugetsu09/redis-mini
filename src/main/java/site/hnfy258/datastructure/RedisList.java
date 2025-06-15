@@ -47,9 +47,7 @@ public class RedisList implements RedisData{
 
     public int size(){
         return list.size();
-    }
-
-    public void lpush(RedisBytes... values){
+    }    public void lpush(RedisBytes... values){
         for(RedisBytes value : values){
             list.addFirst(value);
         }
@@ -59,13 +57,42 @@ public class RedisList implements RedisData{
         return list.pollFirst();
     }
 
-    public List<RedisBytes> lrange(int start, int stop){
-        int size = list.size();
-        start = Math.max(0, start);
-        stop = Math.min(size-1, stop);
+    /**
+     * 向列表右端(尾部)推入一个或多个元素
+     * 
+     * @param values 要推入的元素
+     */
+    public void rpush(RedisBytes... values){
+        for(RedisBytes value : values){
+            list.addLast(value);
+        }
+    }
 
-        if(start <= stop){
-            return list.subList(start, stop+1);
+    /**
+     * 从列表右端(尾部)弹出一个元素
+     * 
+     * @return 弹出的元素，如果列表为空则返回null
+     */
+    public RedisBytes rpop(){
+        return list.pollLast();
+    }    public List<RedisBytes> lrange(int start, int stop){
+        int size = list.size();
+        
+        // 1. 处理负数索引
+        if (start < 0) {
+            start = size + start;
+        }
+        if (stop < 0) {
+            stop = size + stop;
+        }
+        
+        // 2. 边界检查
+        start = Math.max(0, start);
+        stop = Math.min(size - 1, stop);
+
+        // 3. 返回子列表
+        if (start <= stop && start < size) {
+            return new ArrayList<>(list.subList(start, stop + 1));
         }
         return Collections.emptyList();
     }

@@ -16,32 +16,32 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * LPUSH命令实现 - 将一个或多个值插入到列表头部
- * 语法: LPUSH key value1 [value2 ...]
+ * RPUSH命令实现 - 将一个或多个值插入到列表尾部
+ * 语法: RPUSH key value1 [value2 ...]
  * 
  * @author hnfy258
  * @since 2025-06-15
  */
 @Slf4j
-public class Lpush implements Command {
+public class Rpush implements Command {
     
     private final RedisCore redisCore;
     private final List<RedisBytes> elements = new ArrayList<>();
     private RedisBytes key;
 
-    public Lpush(final RedisCore redisCore) {
+    public Rpush(final RedisCore redisCore) {
         this.redisCore = redisCore;
     }
 
     @Override
     public CommandType getType() {
-        return CommandType.LPUSH;
+        return CommandType.RPUSH;
     }
 
     @Override
     public void setContext(final Resp[] array) {
         if (array.length < 3) {
-            throw new IllegalStateException("参数不足：LPUSH需要至少一个值");
+            throw new IllegalStateException("参数不足：RPUSH需要至少一个值");
         }
         
         // 1. 解析键名
@@ -69,9 +69,9 @@ public class Lpush implements Command {
                 return new Errors("WRONGTYPE Operation against a key holding the wrong kind of value");
             }
 
-            // 2. 批量插入元素到列表头部
+            // 2. 批量插入元素到列表尾部
             final RedisBytes[] elementArray = elements.toArray(new RedisBytes[0]);
-            redisList.lpush(elementArray);
+            redisList.rpush(elementArray);
             
             // 3. 保存列表
             redisCore.put(key, redisList);
@@ -80,7 +80,7 @@ public class Lpush implements Command {
             return new RespInteger(redisList.size());
             
         } catch (final Exception e) {
-            log.error("LPUSH命令执行失败", e);
+            log.error("RPUSH命令执行失败", e);
             return new Errors("ERR " + e.getMessage());
         }
     }

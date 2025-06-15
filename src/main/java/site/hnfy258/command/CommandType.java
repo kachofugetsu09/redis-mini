@@ -12,12 +12,16 @@ import site.hnfy258.command.impl.hash.Hset;
 import site.hnfy258.command.impl.list.Lpop;
 import site.hnfy258.command.impl.list.Lpush;
 import site.hnfy258.command.impl.list.Lrange;
+import site.hnfy258.command.impl.list.Rpop;
+import site.hnfy258.command.impl.list.Rpush;
 import site.hnfy258.command.impl.set.Sadd;
 import site.hnfy258.command.impl.set.Spop;
 import site.hnfy258.command.impl.set.Srem;
 import site.hnfy258.command.impl.string.Append;
 import site.hnfy258.command.impl.string.Get;
 import site.hnfy258.command.impl.string.Getrange;
+import site.hnfy258.command.impl.string.Incr;
+import site.hnfy258.command.impl.string.Mset;
 import site.hnfy258.command.impl.string.Set;
 import site.hnfy258.command.impl.string.Strlen;
 import site.hnfy258.command.impl.zset.Zadd;
@@ -28,18 +32,20 @@ import site.hnfy258.server.core.RedisCore;
 import java.util.function.Function;
 
 @Getter
-public enum CommandType {
-    PING("PING", core -> new Ping()),    
+public enum CommandType {    PING("PING", core -> new Ping()),    
     SET("SET", Set::new),
     GET("GET", Get::new),
+    INCR("INCR", Incr::new),
+    MSET("MSET", Mset::new),
     APPEND("APPEND", Append::new),
     STRLEN("STRLEN", Strlen::new),
     GETRANGE("GETRANGE", Getrange::new),
     SADD("SADD", Sadd::new),
     SPOP("SPOP", Spop::new),
-    SREM("SREM", Srem::new),
-    LPUSH("LPUSH", Lpush::new),
+    SREM("SREM", Srem::new),    LPUSH("LPUSH", Lpush::new),
     LPOP("LPOP", Lpop::new),
+    RPUSH("RPUSH", Rpush::new),
+    RPOP("RPOP", Rpop::new),
     LRANGE("LRANGE", Lrange::new),
     HSET("HSET", Hset::new),
     HGET("HGET", Hget::new),

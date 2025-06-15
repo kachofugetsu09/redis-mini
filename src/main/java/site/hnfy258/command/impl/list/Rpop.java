@@ -12,31 +12,31 @@ import site.hnfy258.protocal.Resp;
 import site.hnfy258.server.core.RedisCore;
 
 /**
- * LPOP命令实现 - 移除并返回列表的第一个元素
- * 语法: LPOP key
+ * RPOP命令实现 - 移除并返回列表的最后一个元素
+ * 语法: RPOP key
  * 
  * @author hnfy258
  * @since 2025-06-15
  */
 @Slf4j
-public class Lpop implements Command {
+public class Rpop implements Command {
     
     private final RedisCore redisCore;
     private RedisBytes key;
 
-    public Lpop(final RedisCore redisCore) {
+    public Rpop(final RedisCore redisCore) {
         this.redisCore = redisCore;
     }
 
     @Override
     public CommandType getType() {
-        return CommandType.LPOP;
+        return CommandType.RPOP;
     }
 
     @Override
     public void setContext(final Resp[] array) {
         if (array.length < 2) {
-            throw new IllegalStateException("参数不足：LPOP需要一个键参数");
+            throw new IllegalStateException("参数不足：RPOP需要一个键参数");
         }
         key = ((BulkString) array[1]).getContent();
     }
@@ -59,8 +59,8 @@ public class Lpop implements Command {
 
             final RedisList redisList = (RedisList) redisData;
             
-            // 4. 从列表头部弹出元素
-            final RedisBytes poppedElement = redisList.lpop();
+            // 4. 从列表尾部弹出元素
+            final RedisBytes poppedElement = redisList.rpop();
             
             if (poppedElement == null) {
                 // 5. 列表为空
@@ -79,7 +79,7 @@ public class Lpop implements Command {
             return new BulkString(poppedElement);
             
         } catch (final Exception e) {
-            log.error("LPOP命令执行失败", e);
+            log.error("RPOP命令执行失败", e);
             return new Errors("ERR " + e.getMessage());
         }
     }

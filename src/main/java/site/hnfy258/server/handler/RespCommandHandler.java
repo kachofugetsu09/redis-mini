@@ -1,11 +1,9 @@
 package site.hnfy258.server.handler;
 
 import io.netty.buffer.ByteBuf;
-import io.netty.buffer.ByteBufUtil;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
-import io.netty.channel.ChannelHandler.Sharable;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import site.hnfy258.aof.AofManager;
@@ -49,8 +47,6 @@ public class RespCommandHandler extends SimpleChannelInboundHandler<Resp> {
         this.aofManager = aofManager;
         this.redisNode = redisNode;
     }
-
-
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, Resp msg) throws Exception {
         if(msg instanceof RespArray){
@@ -58,11 +54,29 @@ public class RespCommandHandler extends SimpleChannelInboundHandler<Resp> {
             Resp response = processCommand(respArray,ctx);
 
             if(response!=null){
-                ctx.channel().writeAndFlush(response);
+                ctx.writeAndFlush(response);
             }
         }else{
-            ctx.channel().writeAndFlush(new Errors("不支持的命令"));
+            ctx.writeAndFlush(new Errors("不支持的命令"));
         }
+    }
+
+    /**
+     * 确保数据被及时刷新到客户端
+     */
+    @Override
+    public void channelReadComplete(ChannelHandlerContext ctx) throws Exception {
+        ctx.flush();
+        super.channelReadComplete(ctx);
+    }
+
+    /**
+     * 处理连接异常
+     */
+    @Override
+    public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) throws Exception {
+        log.error("连接异常: {}", cause.getMessage(), cause);
+        ctx.close();
     }
 
     private Resp processCommand(RespArray respArray, ChannelHandlerContext ctx) {
@@ -85,11 +99,10 @@ public class RespCommandHandler extends SimpleChannelInboundHandler<Resp> {
             
             if (commandType == null) {
                 return new Errors("命令不存在");
-            }
-
-            // 使用命令对象池获取Command实例
+            }            // 使用命令对象池获取Command实例
             Command command = commandType.createCommand(redisCore);
             command.setContext(array);
+
 
             if(command instanceof Psync){
                 ((Psync)command).setChannelHandlerContext(ctx);
@@ -100,6 +113,7 @@ public class RespCommandHandler extends SimpleChannelInboundHandler<Resp> {
             }
 
             Resp result = command.handle();
+
 
             // 写命令处理：AOF持久化 + 主从复制传播
             if(command.isWriteCommand()){
