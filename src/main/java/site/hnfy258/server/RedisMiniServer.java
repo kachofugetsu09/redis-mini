@@ -105,7 +105,7 @@ public class RedisMiniServer implements RedisServer{
                     protected void initChannel(SocketChannel ch) throws Exception {
                         ChannelPipeline pipeline = ch.pipeline();
                         pipeline.addLast(new RespDecoder());
-                        pipeline.addLast(commandExecutor, commandHandler);
+                        pipeline.addLast(commandExecutor, new RespCommandHandler(redisCore, aofManager, redisNode));
                         pipeline.addLast(new RespEncoder());
                     }
                 });

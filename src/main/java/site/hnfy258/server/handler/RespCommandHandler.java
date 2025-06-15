@@ -2,6 +2,7 @@ package site.hnfy258.server.handler;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufUtil;
+import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.channel.ChannelHandler.Sharable;
@@ -21,7 +22,6 @@ import site.hnfy258.server.core.RedisCore;
 
 @Slf4j
 @Getter
-@Sharable
 public class RespCommandHandler extends SimpleChannelInboundHandler<Resp> {
     private AofManager aofManager;
     private final RedisCore redisCore;
@@ -30,7 +30,7 @@ public class RespCommandHandler extends SimpleChannelInboundHandler<Resp> {
 
     // 重用的ByteBuf，用于命令传播
     private static final ThreadLocal<ByteBuf> propagationBuf = ThreadLocal.withInitial(() ->
-        io.netty.buffer.Unpooled.buffer(4096)
+        Unpooled.buffer(4096)
     );
 
     public RespCommandHandler(RedisCore redisCore, AofManager aofManager, boolean isMaster) {
@@ -43,6 +43,13 @@ public class RespCommandHandler extends SimpleChannelInboundHandler<Resp> {
         this.redisCore = redisCore;
         this.aofManager = aofManager;
     }
+
+    public RespCommandHandler(RedisCore redisCore, AofManager aofManager, RedisNode redisNode) {
+        this.redisCore = redisCore;
+        this.aofManager = aofManager;
+        this.redisNode = redisNode;
+    }
+
 
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, Resp msg) throws Exception {
