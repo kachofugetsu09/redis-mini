@@ -4,6 +4,7 @@ import lombok.Getter;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import site.hnfy258.cluster.node.RedisNode;
+import site.hnfy258.datastructure.RedisBytes;
 import site.hnfy258.protocal.BulkString;
 import site.hnfy258.protocal.Resp;
 import site.hnfy258.protocal.RespArray;
@@ -90,10 +91,10 @@ public class HeartbeatManager {
     }
 
     private void sendHeartbeat() {
-        try{
-            if(redisNode.getClientChannel() != null && redisNode.getClientChannel().isActive()) {
+        try{            if(redisNode.getClientChannel() != null && redisNode.getClientChannel().isActive()) {
+                // 🚀 优化：使用 RedisBytes 缓存 PING 命令
                 Resp[] pingArray = new Resp[]{
-                        new BulkString("PING".getBytes())
+                        new BulkString(RedisBytes.fromString("PING"))
                 };
                 RespArray pingCommand = new RespArray(pingArray);
                 // 发送心跳命令

@@ -92,16 +92,10 @@ public class RespCommandHandler extends SimpleChannelInboundHandler<Resp> {
 
         try {
             Resp[] array = respArray.getContent();
-            RedisBytes cmd = ((BulkString)array[0]).getContent();
+            //高性能命令查找：直接使用哈希表，O(1) 时间复杂度
+            final RedisBytes cmd = ((BulkString)array[0]).getContent();
+            final CommandType commandType = CommandType.findByBytes(cmd);
             
-            // 直接使用byte[]比较，避免String转换
-            CommandType commandType = null;
-            for (CommandType type : CommandType.values()) {
-                if (type.matchesRedisBytes(cmd)) {
-                    commandType = type;
-                    break;
-                }
-            }
             if (commandType == null) {
                 return new Errors("命令不存在");
             }

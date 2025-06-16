@@ -42,10 +42,10 @@ public final class ReplicationUtils {
 
             if(lineIndex >=lines.length) {
                 throw new IllegalArgumentException("Invalid command format");
-            }
-
+            }            
             String data = lines[lineIndex];
-            args[i] = new BulkString(new RedisBytes(data.getBytes()));
+            // 使用 RedisBytes.fromString 获得缓存和零拷贝优势
+            args[i] = new BulkString(RedisBytes.fromString(data));
             lineIndex++;
         }
 

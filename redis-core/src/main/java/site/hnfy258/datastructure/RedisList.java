@@ -34,9 +34,9 @@ public class RedisList implements RedisData{
     public List<Resp> convertToResp() {
         if(list == null || list.size() == 0){
             return Collections.emptyList();
-        }
-        List<Resp> lpushCommand = new ArrayList<>();
-        lpushCommand.add(new BulkString("LPUSH".getBytes()));
+        }        List<Resp> lpushCommand = new ArrayList<>();
+        // 🚀 优化：使用 RedisBytes 缓存 LPUSH 命令
+        lpushCommand.add(new BulkString(RedisBytes.fromString("LPUSH")));
         lpushCommand.add(new BulkString(key.getBytesUnsafe()));
         for(RedisBytes value : list){
             lpushCommand.add(new BulkString(value.getBytesUnsafe()));

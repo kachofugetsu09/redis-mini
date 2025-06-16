@@ -29,6 +29,9 @@ import site.hnfy258.command.impl.key.*;
 import site.hnfy258.datastructure.RedisBytes;
 import site.hnfy258.server.context.RedisContext;
 
+import java.util.HashMap;
+import java.util.Map;
+
 
 @Getter
 public enum CommandType {
@@ -70,8 +73,59 @@ public enum CommandType {
 
     private final RedisBytes commandBytes;
 
+    private static final Map<RedisBytes, CommandType> COMMAND_CACHE = new HashMap<>();
+
+    private final int bytesHashCode;
+    
+    static {
+        // 1. 静态初始化时构建命令查找缓存
+        for (final CommandType type : CommandType.values()) {
+            COMMAND_CACHE.put(type.commandBytes, type);
+        }
+    }
+
     CommandType(final String commandName) {
         this.commandBytes = RedisBytes.fromString(commandName);
+        this.bytesHashCode = this.commandBytes.hashCode();
+    }
+
+    /**
+     * 
+     * @param commandBytes 命令字节数组
+     * @return 对应的CommandType，如果不存在则返回null
+     */
+    public static CommandType findByBytes(final RedisBytes commandBytes) {
+        return COMMAND_CACHE.get(commandBytes);
+    }
+    
+    /**
+     * 
+     * @param bytes 命令字节数组
+     * @return 对应的CommandType，如果不存在则返回null
+     */
+    public static CommandType findByBytes(final byte[] bytes) {
+        final RedisBytes redisBytes = new RedisBytes(bytes);
+        return COMMAND_CACHE.get(redisBytes);
+    }
+
+    /**
+     *  兼容性方法：支持字符串查找（用于AOF加载等场景）
+     * 
+     * @param commandName 命令名称字符串
+     * @return 对应的CommandType，如果不存在则返回null
+     */
+    public static CommandType findByName(final String commandName) {
+        if (commandName == null || commandName.isEmpty()) {
+            return null;
+        }
+        
+        // 2. 转换为大写并查找
+        final String upperCommandName = commandName.toUpperCase();
+        try {
+            return CommandType.valueOf(upperCommandName);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 
     public boolean matchesBytes(byte[] bytes) {
@@ -80,7 +134,7 @@ public enum CommandType {
 
     public boolean matchesRedisBytes(RedisBytes other) {
         return commandBytes.equalsIgnoreCase(other);
-    }    /**
+    }/**
      * 使用RedisContext创建命令实例
      * 
      * @param context Redis统一上下文

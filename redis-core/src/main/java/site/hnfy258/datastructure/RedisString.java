@@ -37,10 +37,11 @@ public class RedisString implements RedisData{
     public List<Resp> convertToResp() {
         if(value == null){
             return Collections.emptyList();
-        }
+        }            
         List<Resp> setCommand = new ArrayList<>();
-        setCommand.add(new BulkString("SET".getBytes()));
-        setCommand.add(new BulkString(key.getBytes()));
+        // 🚀 优化：使用 RedisBytes 缓存 SET 命令
+        setCommand.add(new BulkString(RedisBytes.fromString("SET")));
+        setCommand.add(new BulkString(key.getBytesUnsafe()));
         setCommand.add(new BulkString(value.getBytes()));
         return Collections.singletonList(new RespArray(setCommand.toArray(new Resp[0])));
     }    public RedisBytes getValue() {

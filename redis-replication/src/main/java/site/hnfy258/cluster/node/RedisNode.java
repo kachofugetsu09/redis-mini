@@ -16,6 +16,7 @@ import site.hnfy258.cluster.replication.ReplicationHandler;
 import site.hnfy258.cluster.replication.ReplicationManager;
 import site.hnfy258.cluster.replication.ReplicationStateMachine;
 import site.hnfy258.core.RedisCore;
+import site.hnfy258.datastructure.RedisBytes;
 import site.hnfy258.protocal.BulkString;
 import site.hnfy258.protocal.Resp;
 import site.hnfy258.protocal.RespArray;
@@ -191,25 +192,25 @@ public class RedisNode {
         bootstrap.connect(getMasterHost(),getMasterPort()).addListener((ChannelFutureListener) f1 -> {
             if(f1.isSuccess()) {
                 setClientChannel(f1.channel());
-                Resp[] psyncCommand = new Resp[3];
-                RespArray command = null;
+                Resp[] psyncCommand = new Resp[3];                RespArray command = null;
                 if(nodeState.hasSavedConnectionInfo()){
-                    psyncCommand[0] = new BulkString("PSYNC".getBytes());
-                    psyncCommand[1] = new BulkString(nodeState.getLastKnownMasterId().getBytes());
-                    psyncCommand[2] = new BulkString(String.valueOf(nodeState.getLastKnownOffset()).getBytes());
+                    // 🚀 优化：使用 RedisBytes 缓存 PSYNC 命令参数
+                    psyncCommand[0] = new BulkString(RedisBytes.fromString("PSYNC"));
+                    psyncCommand[1] = new BulkString(RedisBytes.fromString(nodeState.getLastKnownMasterId()));
+                    psyncCommand[2] = new BulkString(RedisBytes.fromString(String.valueOf(nodeState.getLastKnownOffset())));
                     command = new RespArray(psyncCommand);
                 }
                 else if(!connected){
-                    psyncCommand[0] = new BulkString("PSYNC".getBytes());
-                    psyncCommand[1] = new BulkString("?".getBytes());
-                    psyncCommand[2] = new BulkString("-1".getBytes());
+                    psyncCommand[0] = new BulkString(RedisBytes.fromString("PSYNC"));
+                    psyncCommand[1] = new BulkString(RedisBytes.fromString("?"));
+                    psyncCommand[2] = new BulkString(RedisBytes.fromString("-1"));
                     command = new RespArray(psyncCommand);
                 }
 
                 else{
-                    psyncCommand[0] = new BulkString("PSYNC".getBytes());
-                    psyncCommand[1] = new BulkString(nodeState.getMasterNode().getNodeId().getBytes());
-                    psyncCommand[2] = new BulkString(String.valueOf(nodeState.getMasterNode().getNodeState().getReplicationOffset()).getBytes());
+                    psyncCommand[0] = new BulkString(RedisBytes.fromString("PSYNC"));
+                    psyncCommand[1] = new BulkString(RedisBytes.fromString(nodeState.getMasterNode().getNodeId()));
+                    psyncCommand[2] = new BulkString(RedisBytes.fromString(String.valueOf(nodeState.getMasterNode().getNodeState().getReplicationOffset())));
                     command = new RespArray(psyncCommand);
                 }
                 connected = true;

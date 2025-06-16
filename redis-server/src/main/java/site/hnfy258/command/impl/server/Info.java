@@ -2,6 +2,7 @@ package site.hnfy258.command.impl.server;
 
 import site.hnfy258.command.Command;
 import site.hnfy258.command.CommandType;
+import site.hnfy258.datastructure.RedisBytes;
 import site.hnfy258.protocal.Resp;
 import site.hnfy258.protocal.BulkString;
 import site.hnfy258.server.context.RedisContext;
@@ -90,12 +91,13 @@ public class Info implements Command {
                 if (keys > 0) {
                     info.append("db").append(i).append(":keys=").append(keys).append("\r\n");
                 }
-            }
+            }        
         } finally {
             context.selectDB(currentDb); // 恢复原来的数据库索引
         }
         
-        return new BulkString(info.toString().getBytes());
+        // 🚀 优化：使用 RedisBytes.fromString 获得更好的性能
+        return new BulkString(RedisBytes.fromString(info.toString()));
     }
 
     private String formatBytes(long bytes) {

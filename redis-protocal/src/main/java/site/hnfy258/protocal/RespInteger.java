@@ -9,12 +9,10 @@ public class RespInteger extends Resp {
 
     public RespInteger(int content) {
         this.content = content;
-    }
-
-    @Override
+    }    @Override
     public void encode(Resp resp, ByteBuf byteBuf) {
         byteBuf.writeByte(':');
-        byteBuf.writeBytes(String.valueOf(((RespInteger)resp).getContent()).getBytes());
+        writeIntegerAsBytes(byteBuf, ((RespInteger) resp).getContent());
         byteBuf.writeBytes(CRLF);
     }
 }

@@ -40,9 +40,9 @@ public class RedisHash implements RedisData{
         List<Resp> result = new ArrayList<>();
         for(Map.Entry<Object, Object> entry : hash.entrySet()){
             Object field = entry.getKey();
-            Object value = entry.getValue();
-            List<Resp> hsetCommand = new ArrayList<>();
-            hsetCommand.add(new BulkString("HSET".getBytes()));
+            Object value = entry.getValue();            List<Resp> hsetCommand = new ArrayList<>();
+            // 🚀 优化：使用 RedisBytes 缓存 HSET 命令
+            hsetCommand.add(new BulkString(RedisBytes.fromString("HSET")));
             hsetCommand.add(new BulkString(key.getBytesUnsafe()));
             if(field instanceof RedisBytes) {
                 hsetCommand.add(new BulkString(((RedisBytes) field).getBytesUnsafe()));

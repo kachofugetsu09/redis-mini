@@ -42,15 +42,16 @@ public class RedisZset implements RedisData{
                continue;
            }
            Double score = (Double) entry.getKey();
-           Object member = entry.getValue();
+           Object member = entry.getValue();           
            List<Resp> zaddCommand = new ArrayList<>();
-           zaddCommand.add(new BulkString("ZADD".getBytes()));
+           // 使用 RedisBytes 缓存 ZADD 命令
+           zaddCommand.add(new BulkString(RedisBytes.fromString("ZADD")));
            zaddCommand.add(new BulkString(key.getBytesUnsafe()));
-           zaddCommand.add(new BulkString(score.toString().getBytes()));
+           zaddCommand.add(new BulkString(RedisBytes.fromString(score.toString())));
            if (member instanceof RedisBytes) {
                zaddCommand.add(new BulkString(((RedisBytes) member).getBytesUnsafe()));
            } else {
-               zaddCommand.add(new BulkString(member.toString().getBytes()));
+               zaddCommand.add(new BulkString(RedisBytes.fromString(member.toString())));
            }
            result.add(new RespArray(zaddCommand.toArray(new Resp[0])));
        }

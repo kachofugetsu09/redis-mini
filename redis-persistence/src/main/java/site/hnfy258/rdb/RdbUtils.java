@@ -99,14 +99,12 @@ public class RdbUtils {
         int read = dis.read(header);
         return read == 9 && new String(header).equals("REDIS0009");
     }
-
-
     public static void saveList(DataOutputStream dos, RedisBytes key, RedisList value) throws IOException {
         dos.writeByte(RdbConstants.LIST_TYPE);
         writeString(dos,key.getBytes());
         writeLength(dos,value.size());
        for(RedisBytes bytes: value.getAll()){
-            writeString(dos,bytes.getBytes());
+            writeString(dos,bytes.getBytesUnsafe());
        }
     }
 
@@ -126,11 +124,10 @@ public class RdbUtils {
     public static void saveHash(DataOutputStream dos, RedisBytes key, RedisHash value) throws IOException {
         dos.writeByte(RdbConstants.HASH_TYPE);
         writeString(dos,key.getBytes());
-        Dict<RedisBytes,RedisBytes> hash = value.getHash();
-        writeLength(dos,hash.size());
+        Dict<RedisBytes,RedisBytes> hash = value.getHash();        writeLength(dos,hash.size());
         for(Map.Entry<Object, Object> entry : hash.entrySet()){
-            writeString(dos,((RedisBytes)entry.getKey()).getBytes());
-            writeString(dos,((RedisBytes)entry.getValue()).getBytes());
+            writeString(dos,((RedisBytes)entry.getKey()).getBytesUnsafe());
+            writeString(dos,((RedisBytes)entry.getValue()).getBytesUnsafe());
         }
         log.info("保存哈希表: {}", key);
     }
@@ -147,14 +144,12 @@ public class RdbUtils {
         redisCore.selectDB(currentDbIndex);
         redisCore.put(key, redisHash);
         log.info("加载哈希表到数据库{}:{}->{}",currentDbIndex,key.getString(), redisHash.getHash());
-    }
-
-    public static void saveSet(DataOutputStream dos, RedisBytes key, RedisSet value) throws IOException {
+    }    public static void saveSet(DataOutputStream dos, RedisBytes key, RedisSet value) throws IOException {
         dos.writeByte(RdbConstants.SET_TYPE);
         writeString(dos,key.getBytes());
         writeLength(dos,value.size());
         for(RedisBytes bytes: value.getAll()){
-            writeString(dos,bytes.getBytes());
+            writeString(dos,bytes.getBytesUnsafe());
         }
         log.info("保存集合: {}", key);
     }
@@ -176,13 +171,11 @@ public class RdbUtils {
     public static void saveZset(DataOutputStream dos, RedisBytes key, RedisZset value) throws IOException {
         dos.writeByte(RdbConstants.ZSET_TYPE);
         writeString(dos,key.getBytes());
-        int size = value.size();
-        writeLength(dos,size);
-        @SuppressWarnings("unchecked")
+        int size = value.size();        writeLength(dos,size);
         Iterable<? extends Map.Entry<Double, Object>> entries = value.getAll();
         for(Map.Entry<Double, Object> entry : entries){
             writeString(dos,String.valueOf(entry.getKey()).getBytes());
-            writeString(dos,((RedisBytes)entry.getValue()).getBytes());
+            writeString(dos,((RedisBytes)entry.getValue()).getBytesUnsafe());
         }
         log.info("保存有序集合: {}", key);
     }

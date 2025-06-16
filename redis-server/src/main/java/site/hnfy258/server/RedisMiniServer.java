@@ -54,7 +54,7 @@ public class RedisMiniServer implements RedisServer, ReplicationHost {
 
     private static final boolean ENABLE_AOF = false;
     private AofManager aofManager;
-    private static final boolean ENABLE_RDB = true;
+    private static final boolean ENABLE_RDB = false;
     private RdbManager rdbManager;
     private String rdbFileName;
 

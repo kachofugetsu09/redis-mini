@@ -96,16 +96,19 @@ public class Zrange implements Command {
             }
             
             // 构建返回数据
-            List<Resp> respList = new ArrayList<>();
-            try {
+            List<Resp> respList = new ArrayList<>();            try {
                 for(SkipList.SkipListNode<String> node : range){
                     if(node == null || node.member == null) {
                         continue; // 跳过空节点
                     }
                     
-                    respList.add(new BulkString(new RedisBytes(node.member.getBytes())));
+                    // 优化：使用 RedisBytes.fromString 获得缓存和零拷贝优势
+                    final RedisBytes memberBytes = RedisBytes.fromString(node.member);
+                    respList.add(new BulkString(memberBytes));
+                    
                     if(withScores){
-                        respList.add(new BulkString(new RedisBytes(String.valueOf(node.score).getBytes())));
+                        final RedisBytes scoreBytes = RedisBytes.fromString(String.valueOf(node.score));
+                        respList.add(new BulkString(scoreBytes));
                     }
                 }
             } catch (Exception e) {

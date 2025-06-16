@@ -4,6 +4,7 @@ import lombok.extern.slf4j.Slf4j;
 import site.hnfy258.command.Command;
 import site.hnfy258.command.CommandType;
 import site.hnfy258.core.command.CommandExecutor;
+import site.hnfy258.datastructure.RedisBytes;
 import site.hnfy258.protocal.BulkString;
 import site.hnfy258.protocal.Resp;
 import site.hnfy258.protocal.RespArray;
@@ -28,21 +29,23 @@ public class CommandExecutorImpl implements CommandExecutor {
     
     @Override
     public boolean executeCommand(String commandName, String[] args) {
-        try {
-            // 1. 转换为CommandType
-            final CommandType commandType;
-            try {
-                commandType = CommandType.valueOf(commandName.toUpperCase());
-            } catch (IllegalArgumentException e) {
+        try {           
+
+            final CommandType commandType = CommandType.findByName(commandName);
+            if (commandType == null) {
                 log.warn("未知命令类型: {}", commandName);
                 return false;
-            }
-            
-            // 2. 构建RESP格式的参数
+            }            // 2. 构建RESP格式的参数，使用RedisBytes优化性能
             Resp[] respArgs = new Resp[args.length + 1];
-            respArgs[0] = new BulkString(commandName.getBytes());
+            
+            // 命令名优先从缓存池获取
+            final RedisBytes commandBytes = RedisBytes.fromString(commandName);
+            respArgs[0] = new BulkString(commandBytes.getBytesUnsafe());
+            
+            // 参数使用RedisBytes减少重复编码
             for (int i = 0; i < args.length; i++) {
-                respArgs[i + 1] = new BulkString(args[i].getBytes());
+                final RedisBytes argBytes = RedisBytes.fromString(args[i]);
+                respArgs[i + 1] = new BulkString(argBytes.getBytesUnsafe());
             }
             RespArray respArray = new RespArray(respArgs);
             

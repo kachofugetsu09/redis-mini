@@ -50,12 +50,11 @@ public class Append implements Command {
     @Override
     public Resp handle() {
         RedisData data = redisContext.get(key);
-        
-        if (data == null) {
+          if (data == null) {
             // 键不存在，创建新的RedisString
             Sds sds = new Sds(value.getBytes());
             redisContext.put(key, new RedisString(sds));
-            return new RespInteger(value.getBytes().length);
+            return new RespInteger(value.getBytesUnsafe().length);
         }
         
         if (!(data instanceof RedisString)) {

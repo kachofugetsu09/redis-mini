@@ -50,8 +50,8 @@ public abstract class Resp {
             case '-':
                 return new Errors(getString(buffer));
             case ':':
-                return new RespInteger(getNumber(buffer));
-            case '$':
+                return new RespInteger(getNumber(buffer));            
+                case '$':
                 int length = getNumber(buffer);
                 if(buffer.readableBytes() < length+2){
                     throw new IllegalStateException("没有找到换行符");
@@ -61,14 +61,29 @@ public abstract class Resp {
                 if(length == -1){
                     content = null;
                 }else{
-                    content = new byte[length];
-                    buffer.readBytes(content);
+                    //  零拷贝优化：直接从 ByteBuf 获取数组引用
+                    if (buffer.hasArray() && length > 0) {
+                        // 1. 如果 ByteBuf 有底层数组，尝试零拷贝
+                        final int startIndex = buffer.arrayOffset() + buffer.readerIndex();
+                        final byte[] backingArray = buffer.array();
+                        
+                        // 2. 创建指定长度的数组（仍需拷贝，但避免了 readBytes 的额外开销）
+                        content = new byte[length];
+                        System.arraycopy(backingArray, startIndex, content, 0, length);
+                        buffer.skipBytes(length);
+                    } else {
+                        // 3. 回退到标准读取方式
+                        content = new byte[length];
+                        buffer.readBytes(content);
+                    }
                 }
                 if(buffer.readByte() != '\r' || buffer.readByte() != '\n'){
                     throw new IllegalStateException("没有找到换行符");
                 }
 
-                return new BulkString(content);
+                // 🚀 使用零拷贝 BulkString 构造
+                return content == null ? new BulkString((byte[]) null) : 
+                                        BulkString.wrapTrusted(content);
             case '*':
                 int number = getNumber(buffer);
                 Resp[] array = new Resp[number];

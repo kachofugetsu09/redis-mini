@@ -2,6 +2,7 @@ package site.hnfy258.command.impl.server;
 
 import site.hnfy258.command.Command;
 import site.hnfy258.command.CommandType;
+import site.hnfy258.datastructure.RedisBytes;
 import site.hnfy258.protocal.Resp;
 import site.hnfy258.protocal.RespArray;
 import site.hnfy258.protocal.BulkString;
@@ -69,12 +70,11 @@ public class ConfigGet implements Command {
         }
 
         List<Resp> result = new ArrayList<>();
-        Pattern regex = Pattern.compile(pattern.replace("*", ".*"));
-
-        for (Map.Entry<String, String> entry : config.entrySet()) {
+        Pattern regex = Pattern.compile(pattern.replace("*", ".*"));        for (Map.Entry<String, String> entry : config.entrySet()) {
             if (regex.matcher(entry.getKey()).matches()) {
-                result.add(new BulkString(entry.getKey().getBytes()));
-                result.add(new BulkString(entry.getValue().getBytes()));
+                //  优化：使用 RedisBytes.fromString 获得缓存和性能优势
+                result.add(new BulkString(RedisBytes.fromString(entry.getKey())));
+                result.add(new BulkString(RedisBytes.fromString(entry.getValue())));
             }
         }
 

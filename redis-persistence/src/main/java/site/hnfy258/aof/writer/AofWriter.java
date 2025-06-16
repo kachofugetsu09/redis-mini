@@ -446,12 +446,11 @@ public class AofWriter implements Writer {
             log.info("正在重写key:{}",key.getString());
             AofUtils.writeDataToAof(key,value,channel);
         }
-    }
-
-    private void writeSelectCommand(int i, FileChannel channel) {
+    }    private void writeSelectCommand(int i, FileChannel channel) {
         List<Resp> selectCommand = new ArrayList<>();
-        selectCommand.add(new BulkString("SELECT".getBytes()));
-        selectCommand.add(new BulkString(String.valueOf(i).getBytes()));
+        // 🚀 优化：使用 RedisBytes 缓存 SELECT 命令
+        selectCommand.add(new BulkString(RedisBytes.fromString("SELECT")));
+        selectCommand.add(new BulkString(RedisBytes.fromString(String.valueOf(i))));
         writeCommandToChannel(Collections.singletonList(new RespArray(selectCommand.toArray(new Resp[0]))), channel);
     }
 

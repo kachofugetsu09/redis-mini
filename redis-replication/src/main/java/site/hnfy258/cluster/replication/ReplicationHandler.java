@@ -199,10 +199,10 @@ public class ReplicationHandler extends ChannelInboundHandlerAdapter {
             if (response.getContent().length >= 2) {
                 Resp secondElement = response.getContent()[1];
                 if (secondElement instanceof BulkString) {
-                    BulkString commands = (BulkString) secondElement;
-                    if (commands.getContent() != null) {
-                        byte[] commandsData = commands.getContent().getBytes();
-                        log.info("接收到部分同步命令，长度: {}", commands.getContent().getBytes().length);
+                    BulkString commands = (BulkString) secondElement;                    if (commands.getContent() != null) {
+                        // 🚀 优化：使用零拷贝方法避免重复数组分配
+                        byte[] commandsData = commands.getContent().getBytesUnsafe();
+                        log.info("接收到部分同步命令，长度: {}", commandsData.length);
 
                         processIncrementalSyncCommands(commandsData);
                     }
@@ -381,10 +381,9 @@ public class ReplicationHandler extends ChannelInboundHandlerAdapter {
          Resp firstElement = command.getContent()[0];
         if(!(firstElement instanceof BulkString)){
             return false;
-        }
-
+        }        
         BulkString firstBulkString = (BulkString) firstElement;
-        if(firstBulkString.getContent() == null || firstBulkString.getContent().getBytes().length == 0) {
+        if(firstBulkString.getContent() == null || firstBulkString.getContent().getBytesUnsafe().length == 0) {
             log.warn("无效的复制命令: 第一个元素为空");
             return false;
         }
@@ -399,13 +398,13 @@ public class ReplicationHandler extends ChannelInboundHandlerAdapter {
             log.error("接收到空的 BulkString 内容");
             return;
         }
-        ReplicationState currentState = stateMachine.getCurrentState().get();
-
-        if( currentState== ReplicationState.SYNCING){
-            processRdbData(content.getBytes());
+        ReplicationState currentState = stateMachine.getCurrentState().get();        if( currentState== ReplicationState.SYNCING){
+            // 🚀 优化：RDB 数据处理使用零拷贝
+            processRdbData(content.getBytesUnsafe());
         }
         else if(currentState == ReplicationState.STREAMING){
-            byte[] commandsData = content.getBytes();
+            // 🚀 优化：增量同步命令处理使用零拷贝
+            byte[] commandsData = content.getBytesUnsafe();
             processIncrementalSyncCommands(commandsData);
         }
         else{

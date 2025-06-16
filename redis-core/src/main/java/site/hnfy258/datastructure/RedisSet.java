@@ -37,9 +37,9 @@ public class RedisSet implements RedisData{
         List<Resp> result = new ArrayList<>();
         if(setCore.size() == 0){
             return Collections.emptyList();
-        }
-        List<Resp> saddCommand = new ArrayList<>();
-        saddCommand.add(new BulkString("SADD".getBytes()));
+        }        List<Resp> saddCommand = new ArrayList<>();
+        // 🚀 优化：使用 RedisBytes 缓存 SADD 命令
+        saddCommand.add(new BulkString(RedisBytes.fromString("SADD")));
         saddCommand.add(new BulkString(key.getBytesUnsafe()));
         for(RedisBytes member : setCore.keySet()){
             saddCommand.add(new BulkString(member.getBytesUnsafe()));
