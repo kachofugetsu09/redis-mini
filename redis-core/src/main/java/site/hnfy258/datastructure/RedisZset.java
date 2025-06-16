@@ -45,10 +45,10 @@ public class RedisZset implements RedisData{
            Object member = entry.getValue();
            List<Resp> zaddCommand = new ArrayList<>();
            zaddCommand.add(new BulkString("ZADD".getBytes()));
-           zaddCommand.add(new BulkString(key.getBytes()));
+           zaddCommand.add(new BulkString(key.getBytesUnsafe()));
            zaddCommand.add(new BulkString(score.toString().getBytes()));
            if (member instanceof RedisBytes) {
-               zaddCommand.add(new BulkString(((RedisBytes) member).getBytes()));
+               zaddCommand.add(new BulkString(((RedisBytes) member).getBytesUnsafe()));
            } else {
                zaddCommand.add(new BulkString(member.toString().getBytes()));
            }

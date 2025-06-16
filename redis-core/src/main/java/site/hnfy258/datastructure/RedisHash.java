@@ -43,15 +43,15 @@ public class RedisHash implements RedisData{
             Object value = entry.getValue();
             List<Resp> hsetCommand = new ArrayList<>();
             hsetCommand.add(new BulkString("HSET".getBytes()));
-            hsetCommand.add(new BulkString(key.getBytes()));
+            hsetCommand.add(new BulkString(key.getBytesUnsafe()));
             if(field instanceof RedisBytes) {
-                hsetCommand.add(new BulkString(((RedisBytes) field).getBytes()));
+                hsetCommand.add(new BulkString(((RedisBytes) field).getBytesUnsafe()));
             }
             else{
                 hsetCommand.add(new BulkString(field.toString().getBytes()));
             }
             if(value instanceof RedisBytes) {
-                hsetCommand.add(new BulkString(((RedisBytes) value).getBytes()));
+                hsetCommand.add(new BulkString(((RedisBytes) value).getBytesUnsafe()));
             }
             else{
                 hsetCommand.add(new BulkString(value.toString().getBytes()));

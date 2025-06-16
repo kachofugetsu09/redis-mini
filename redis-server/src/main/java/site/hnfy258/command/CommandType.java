@@ -9,12 +9,9 @@ import site.hnfy258.command.impl.cluster.Psync;
 import site.hnfy258.command.impl.hash.Hdel;
 import site.hnfy258.command.impl.hash.Hget;
 import site.hnfy258.command.impl.hash.Hset;
-import site.hnfy258.command.impl.list.Lpop;
-import site.hnfy258.command.impl.list.Lpush;
-import site.hnfy258.command.impl.list.Lrange;
-import site.hnfy258.command.impl.list.Rpop;
-import site.hnfy258.command.impl.list.Rpush;
+import site.hnfy258.command.impl.list.*;
 import site.hnfy258.command.impl.set.Sadd;
+import site.hnfy258.command.impl.set.Scard;
 import site.hnfy258.command.impl.set.Spop;
 import site.hnfy258.command.impl.set.Srem;
 import site.hnfy258.command.impl.string.Append;
@@ -25,11 +22,13 @@ import site.hnfy258.command.impl.string.Mset;
 import site.hnfy258.command.impl.string.Set;
 import site.hnfy258.command.impl.string.Strlen;
 import site.hnfy258.command.impl.zset.Zadd;
+import site.hnfy258.command.impl.zset.Zcard;
 import site.hnfy258.command.impl.zset.Zrange;
+import site.hnfy258.command.impl.server.*;
+import site.hnfy258.command.impl.key.*;
 import site.hnfy258.datastructure.RedisBytes;
 import site.hnfy258.server.context.RedisContext;
 
-import java.util.function.Function;
 
 @Getter
 public enum CommandType {
@@ -57,7 +56,17 @@ public enum CommandType {
     SELECT("SELECT"),
     BGSAVE("BGSAVE"),
     BGREWRITEAOF("BGREWRITEAOF"),
-    PSYNC("PSYNC");
+    PSYNC("PSYNC"),
+    SCAN("SCAN"),
+    KEYS("KEYS"),
+    LLEN("LLEN"),
+    SCARD("SCARD"),
+    ZCARD("ZCARD"),
+    INFO("INFO"),
+    CONFIG_GET("CONFIG"),
+    DBSIZE("DBSIZE"),
+    TYPE("TYPE"),
+    TTL("TTL");
 
     private final RedisBytes commandBytes;
 
@@ -129,6 +138,26 @@ public enum CommandType {
                 return new Bgrewriteaof(context);
             case PSYNC:
                 return new Psync(context);
+            case SCAN:
+                return new Scan(context);
+            case KEYS:
+                return new Keys(context);
+            case LLEN:
+                return new Llen(context);
+            case SCARD:
+                return new Scard(context);
+            case ZCARD:
+                return new Zcard(context);
+            case INFO:
+                return new Info(context);
+            case CONFIG_GET:
+                return new ConfigGet(context);
+            case DBSIZE:
+                return new Dbsize(context);
+            case TYPE:
+                return new Type(context);
+            case TTL:
+                return new Ttl(context);
             default:
                 throw new IllegalArgumentException("不支持的命令类型: " + this);
         }

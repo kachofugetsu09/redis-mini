@@ -40,7 +40,7 @@
     </logger>
 
     <!-- Netty 框架日志级别 -->
-    <logger name="io.netty" level="WARN" additivity="false">
+    <logger name="io.netty" level="INFO" additivity="false">
         <appender-ref ref="CONSOLE"/>
         <appender-ref ref="ASYNC_FILE"/>
     </logger>

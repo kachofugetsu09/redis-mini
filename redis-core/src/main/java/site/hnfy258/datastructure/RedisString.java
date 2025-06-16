@@ -16,10 +16,12 @@ public class RedisString implements RedisData{
     private volatile long timeout;
     private Sds value;
     private RedisBytes key;
+    private RedisBytes cachedValue;
 
     public RedisString(Sds value) {
         this.value = value;
         this.timeout = -1;
+        this.cachedValue = null;
     }
     @Override
     public long timeout() {
@@ -42,7 +44,10 @@ public class RedisString implements RedisData{
         setCommand.add(new BulkString(value.getBytes()));
         return Collections.singletonList(new RespArray(setCommand.toArray(new Resp[0])));
     }    public RedisBytes getValue() {
-        return new RedisBytes(value.getBytes());
+        if (cachedValue == null) {
+            cachedValue = new RedisBytes(value.getBytes());
+        }
+        return cachedValue;
     }
 
     /**
@@ -57,6 +62,7 @@ public class RedisString implements RedisData{
 
     public void setSds(Sds sds) {
         this.value = sds;
+        this.cachedValue = null;
     }
 
     public long incr(){
@@ -64,6 +70,7 @@ public class RedisString implements RedisData{
             long cur = Long.parseLong(value.toString());
             long newValue = cur + 1;
             value = new Sds(String.valueOf(newValue).getBytes());
+            cachedValue = null;
             return newValue;
         }catch(NumberFormatException e){
             throw new IllegalStateException("value is not a number");

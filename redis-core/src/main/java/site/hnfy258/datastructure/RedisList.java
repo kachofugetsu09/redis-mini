@@ -37,12 +37,11 @@ public class RedisList implements RedisData{
         }
         List<Resp> lpushCommand = new ArrayList<>();
         lpushCommand.add(new BulkString("LPUSH".getBytes()));
-        lpushCommand.add(new BulkString(key.getBytes()));
+        lpushCommand.add(new BulkString(key.getBytesUnsafe()));
         for(RedisBytes value : list){
-            lpushCommand.add(new BulkString(value));
+            lpushCommand.add(new BulkString(value.getBytesUnsafe()));
         }
         return Collections.singletonList(new RespArray(lpushCommand.toArray(new Resp[0])));
-
     }
 
     public int size(){

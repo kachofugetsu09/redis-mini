@@ -40,11 +40,11 @@ public class Set implements Command {
             RedisData data = redisContext.get(key);
             if(data instanceof RedisString){
                 RedisString redisString = (RedisString) data;
-                redisString.setSds(new Sds(value.getBytes()));
+                redisString.setSds(new Sds(value.getBytesUnsafe()));
                 return new SimpleString("OK");
             }
         }
-        redisContext.put(key, new RedisString(new Sds(value.getBytes())));
+        redisContext.put(key, new RedisString(new Sds(value.getBytesUnsafe())));
 //        log.info("set key:{} value:{}", key, value);
 
         return new SimpleString("OK");

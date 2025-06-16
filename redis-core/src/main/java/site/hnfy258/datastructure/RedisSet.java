@@ -40,9 +40,9 @@ public class RedisSet implements RedisData{
         }
         List<Resp> saddCommand = new ArrayList<>();
         saddCommand.add(new BulkString("SADD".getBytes()));
-        saddCommand.add(new BulkString(key.getBytes()));
+        saddCommand.add(new BulkString(key.getBytesUnsafe()));
         for(RedisBytes member : setCore.keySet()){
-            saddCommand.add(new BulkString(member.getBytes()));
+            saddCommand.add(new BulkString(member.getBytesUnsafe()));
         }
         result.add(new RespArray(saddCommand.toArray(new Resp[0])));
         return result;
