@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 
+         http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>site.hnfy258</groupId>
+        <artifactId>redis-mini-parent</artifactId>
+        <version>1.0.0</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>redis-replication</artifactId>
+    <packaging>jar</packaging>
+    <name>Redis Replication Module</name>
+    <description>复制模块，包含主从复制、集群管理功能</description>
+
+    <dependencies>
+        <!-- 依赖 redis-common 模块 -->
+        <dependency>
+            <groupId>site.hnfy258</groupId>
+            <artifactId>redis-common</artifactId>
+        </dependency>
+
+        <!-- 依赖 redis-core 模块 -->
+        <dependency>
+            <groupId>site.hnfy258</groupId>
+            <artifactId>redis-core</artifactId>
+        </dependency>
+
+        <!-- 依赖 redis-persistence 模块 -->
+        <dependency>
+            <groupId>site.hnfy258</groupId>
+            <artifactId>redis-persistence</artifactId>
+        </dependency>
+
+        <!-- Lombok 依赖 -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- 网络依赖 -->
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-all</artifactId>
+        </dependency>
+
+        <!-- 日志依赖 -->
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+        </dependency>
+
+        <!-- 测试依赖 -->
+        <dependency>
+            <groupId>junit</groupId>
+            <artifactId>junit</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

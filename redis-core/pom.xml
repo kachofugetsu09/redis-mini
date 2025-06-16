@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 
+         http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>site.hnfy258</groupId>
+        <artifactId>redis-mini-parent</artifactId>
+        <version>1.0.0</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>redis-core</artifactId>
+    <name>Redis Mini - Core</name>
+    <description>核心数据模块 - 实现Redis内存数据结构和数据库模型</description>
+
+    <dependencies>
+        <!-- 依赖 redis-common 模块 -->
+        <dependency>
+            <groupId>site.hnfy258</groupId>
+            <artifactId>redis-common</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>site.hnfy258</groupId>
+            <artifactId>redis-protocal</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- Lombok 注解处理器 -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+        </dependency>
+
+        <!-- JUnit 5 测试框架 -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-engine</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

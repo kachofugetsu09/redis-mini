@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 
+         http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>site.hnfy258</groupId>
+        <artifactId>redis-mini-parent</artifactId>
+        <version>1.0.0</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>redis-server</artifactId>
+    <name>Redis Mini - Server</name>
+    <description>服务整合与启动模块 - 整合所有模块并启动Netty服务器</description>
+
+    <dependencies>
+<!--         依赖 redis-replication 模块 -->
+        <dependency>
+            <groupId>site.hnfy258</groupId>
+            <artifactId>redis-replication</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- 依赖 redis-persistence 模块 -->
+        <dependency>
+            <groupId>site.hnfy258</groupId>
+            <artifactId>redis-persistence</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- 依赖 redis-core 模块 -->
+        <dependency>
+            <groupId>site.hnfy258</groupId>
+            <artifactId>redis-core</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- 依赖 redis-protocal 模块 -->
+        <dependency>
+            <groupId>site.hnfy258</groupId>
+            <artifactId>redis-protocal</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- 依赖 redis-common 模块 -->
+        <dependency>
+            <groupId>site.hnfy258</groupId>
+            <artifactId>redis-common</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- Netty 网络框架 -->
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-all</artifactId>
+        </dependency>
+
+        <!-- Lombok 注解处理器 -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+        </dependency>
+
+        <!-- JUnit 5 测试框架 -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-engine</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- Maven 打包插件 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.4.1</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>site.hnfy258.RedisServerLauncher</mainClass>
+                                </transformer>
+                            </transformers>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

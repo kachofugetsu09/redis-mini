@@ -38,3 +38,5 @@ build/
 .DS_Store
 /redis.aof
 /logs/miniRedis.log
+/dump.rdb
+/logs/
