@@ -48,10 +48,9 @@ public class Incr implements Command {
             // 1. 获取或创建RedisString对象
             RedisData redisData = redisContext.get(key);
             RedisString redisString;
-            
-            if (redisData == null) {
+              if (redisData == null) {
                 // 2. 键不存在，创建新的RedisString，值为0
-                redisString = new RedisString(new Sds("0".getBytes()));
+                redisString = new RedisString(Sds.create("0".getBytes()));
                 redisContext.put(key, redisString);
             } else if (redisData instanceof RedisString) {
                 // 3. 键存在且为字符串类型

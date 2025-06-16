@@ -66,11 +66,10 @@ public class RedisString implements RedisData{
         this.cachedValue = null;
     }
 
-    public long incr(){
-        try{
+    public long incr(){        try{
             long cur = Long.parseLong(value.toString());
             long newValue = cur + 1;
-            value = new Sds(String.valueOf(newValue).getBytes());
+            value = Sds.create(String.valueOf(newValue).getBytes());
             cachedValue = null;
             return newValue;
         }catch(NumberFormatException e){

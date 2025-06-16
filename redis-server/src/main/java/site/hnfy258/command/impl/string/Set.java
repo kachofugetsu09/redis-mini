@@ -36,15 +36,14 @@ public class Set implements Command {
 
     @Override
     public Resp handle() {
-        if(redisContext.get(key) != null){
-            RedisData data = redisContext.get(key);
+        if(redisContext.get(key) != null){            RedisData data = redisContext.get(key);
             if(data instanceof RedisString){
                 RedisString redisString = (RedisString) data;
-                redisString.setSds(new Sds(value.getBytesUnsafe()));
+                redisString.setSds(Sds.create(value.getBytesUnsafe()));
                 return new SimpleString("OK");
             }
         }
-        redisContext.put(key, new RedisString(new Sds(value.getBytesUnsafe())));
+        redisContext.put(key, new RedisString(Sds.create(value.getBytesUnsafe())));
 //        log.info("set key:{} value:{}", key, value);
 
         return new SimpleString("OK");

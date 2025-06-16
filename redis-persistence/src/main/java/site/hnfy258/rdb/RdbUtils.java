@@ -68,7 +68,7 @@ public class RdbUtils {
     public static void loadString(DataInputStream dis, RedisCore redisCore,int currentDBIndex) throws IOException {
         RedisBytes key = new RedisBytes(RdbUtils.readString(dis));
         RedisBytes value = new RedisBytes(RdbUtils.readString(dis));
-        RedisString redisString = new RedisString(new Sds(value.getBytes()));
+        RedisString redisString = new RedisString(Sds.create(value.getBytes()));
         redisCore.selectDB(currentDBIndex);
         redisCore.put(key, redisString);
         log.info("加载键值对到数据库{}:{}->{}",currentDBIndex,key.getString(), value.getString());

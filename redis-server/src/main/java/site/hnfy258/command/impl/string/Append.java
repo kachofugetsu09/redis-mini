@@ -52,7 +52,7 @@ public class Append implements Command {
         RedisData data = redisContext.get(key);
           if (data == null) {
             // 键不存在，创建新的RedisString
-            Sds sds = new Sds(value.getBytes());
+            Sds sds = Sds.create(value.getBytes());
             redisContext.put(key, new RedisString(sds));
             return new RespInteger(value.getBytesUnsafe().length);
         }

@@ -31,12 +31,10 @@ public final class RedisBatchOptimizer {
                                       final Map<RedisBytes, RedisBytes> keyValuePairs) {
         if (keyValuePairs.isEmpty()) {
             return;
-        }
-
-        // 1. 小批量直接设置
+        }        // 1. 小批量直接设置
         if (keyValuePairs.size() < BATCH_SIZE_THRESHOLD) {
             for (final Map.Entry<RedisBytes, RedisBytes> entry : keyValuePairs.entrySet()) {
-                final RedisString redisString = new RedisString(new Sds(entry.getValue().getBytes()));
+                final RedisString redisString = new RedisString(Sds.create(entry.getValue().getBytes()));
                 redisCore.put(entry.getKey(), redisString);
             }
             return;
@@ -54,13 +52,11 @@ public final class RedisBatchOptimizer {
                                          final Map<RedisBytes, RedisBytes> keyValuePairs) {
         // 1. 预分配RedisString对象缓存
         final Map<RedisBytes, RedisString> preparedData = new ConcurrentHashMap<>(
-            keyValuePairs.size() + BUFFER_INITIAL_CAPACITY);
-
-        // 2. 批量预处理数据
+            keyValuePairs.size() + BUFFER_INITIAL_CAPACITY);        // 2. 批量预处理数据
         for (final Map.Entry<RedisBytes, RedisBytes> entry : keyValuePairs.entrySet()) {
-            final RedisString redisString = new RedisString(new Sds(entry.getValue().getBytes()));
+            final RedisString redisString = new RedisString(Sds.create(entry.getValue().getBytes()));
             preparedData.put(entry.getKey(), redisString);
-        }        // 3. 批量写入数据库
+        }// 3. 批量写入数据库
         for (final Map.Entry<RedisBytes, RedisString> entry : preparedData.entrySet()) {
             redisCore.put(entry.getKey(), entry.getValue());
         }
@@ -80,9 +76,8 @@ public final class RedisBatchOptimizer {
             final RedisData currentData = redisCore.get(key);
             final long currentValue = extractNumericValue(currentData);
             final long newValue = currentValue + increment;
-            
-            final RedisString newRedisString = new RedisString(
-                new Sds(String.valueOf(newValue).getBytes())
+              final RedisString newRedisString = new RedisString(
+                Sds.create(String.valueOf(newValue).getBytes())
             );
             redisCore.put(key, newRedisString);
         }
