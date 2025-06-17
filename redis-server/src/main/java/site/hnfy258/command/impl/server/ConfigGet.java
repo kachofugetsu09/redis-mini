@@ -70,7 +70,8 @@ public class ConfigGet implements Command {
         }
 
         List<Resp> result = new ArrayList<>();
-        Pattern regex = Pattern.compile(pattern.replace("*", ".*"));        for (Map.Entry<String, String> entry : config.entrySet()) {
+        Pattern regex = Pattern.compile(pattern.replace("*", ".*"));
+        for (Map.Entry<String, String> entry : config.entrySet()) {
             if (regex.matcher(entry.getKey()).matches()) {
                 //  优化：使用 RedisBytes.fromString 获得缓存和性能优势
                 result.add(new BulkString(RedisBytes.fromString(entry.getKey())));

@@ -87,15 +87,32 @@ public enum CommandType {
     CommandType(final String commandName) {
         this.commandBytes = RedisBytes.fromString(commandName);
         this.bytesHashCode = this.commandBytes.hashCode();
-    }
-
-    /**
-     * 
+    }    /**
+     * 根据字节数组查找对应的命令类型。
+     *
      * @param commandBytes 命令字节数组
      * @return 对应的CommandType，如果不存在则返回null
      */
     public static CommandType findByBytes(final RedisBytes commandBytes) {
-        return COMMAND_CACHE.get(commandBytes);
+        if (commandBytes == null) {
+            return null;
+        }
+        
+        // 1. 直接查找缓存
+        CommandType result = COMMAND_CACHE.get(commandBytes);
+        if (result != null) {
+            return result;
+        }
+        
+        // 2. 大小写不敏感查找：将输入转换为大写后再查找
+        final String commandStr = commandBytes.getString();
+        final String upperCommandStr = commandStr.toUpperCase();
+        
+        // 3. 使用大写字符串创建RedisBytes进行查找
+        final RedisBytes upperCommandBytes = RedisBytes.fromString(upperCommandStr);
+        result = COMMAND_CACHE.get(upperCommandBytes);
+        
+        return result;
     }
     
     /**

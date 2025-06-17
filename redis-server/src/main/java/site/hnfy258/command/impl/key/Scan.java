@@ -28,32 +28,29 @@ public class Scan implements Command {
     @Override
     public CommandType getType() {
         return CommandType.SCAN;
-    }
-
-    @Override
+    }    @Override
     public void setContext(Resp[] array) {
         this.array = array;
         if (array.length >= 2) {
             RedisBytes cursorBytes = ((BulkString) array[1]).getContent();
-            this.cursor = Integer.parseInt(cursorBytes.toString());
+            this.cursor = Integer.parseInt(cursorBytes.getString());
         }
         if (array.length >= 4) {
             RedisBytes optionBytes = ((BulkString) array[2]).getContent();
-            String option = optionBytes.toString().toLowerCase();
+            String option = optionBytes.getString().toLowerCase();
             if ("match".equals(option)) {
                 RedisBytes patternBytes = ((BulkString) array[3]).getContent();
-                this.pattern = patternBytes.toString();
+                this.pattern = patternBytes.getString();
             } else if ("count".equals(option)) {
                 RedisBytes countBytes = ((BulkString) array[3]).getContent();
-                this.count = Integer.parseInt(countBytes.toString());
+                this.count = Integer.parseInt(countBytes.getString());
             }
-        }
-        if (array.length >= 6) {
+        }        if (array.length >= 6) {
             RedisBytes optionBytes = ((BulkString) array[4]).getContent();
-            String option = optionBytes.toString().toLowerCase();
+            String option = optionBytes.getString().toLowerCase();
             if ("count".equals(option)) {
                 RedisBytes countBytes = ((BulkString) array[5]).getContent();
-                this.count = Integer.parseInt(countBytes.toString());
+                this.count = Integer.parseInt(countBytes.getString());
             }
         }
     }
@@ -71,7 +68,7 @@ public class Scan implements Command {
         for (RedisBytes key : keys) {
             if (i++ < cursor) continue;
             
-            if (regex == null || regex.matcher(key.toString()).matches()) {
+            if (regex == null || regex.matcher(key.getString()).matches()) {
                 result.add(key);
                 matched++;
                 if (matched >= count) {
