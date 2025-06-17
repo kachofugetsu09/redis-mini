@@ -1,7 +1,7 @@
 package site.hnfy258.server.handler;
 
 import io.netty.buffer.ByteBuf;
-import io.netty.buffer.Unpooled;
+import io.netty.buffer.PooledByteBufAllocator;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
 import lombok.Getter;
@@ -21,16 +21,18 @@ import site.hnfy258.server.context.RedisContext;
 @Getter
 public class RespCommandHandler extends SimpleChannelInboundHandler<Resp> {
     
+    // ========== 静态错误响应：避免重复创建 ==========
+    private static final Errors UNSUPPORTED_COMMAND_ERROR = new Errors("不支持的命令");
+    private static final Errors EMPTY_COMMAND_ERROR = new Errors("命令不能为空");
+    private static final Errors COMMAND_NOT_FOUND_ERROR = new Errors("命令不存在");
+    private static final Errors COMMAND_EXECUTION_ERROR = new Errors("命令执行失败");
+    
     // ========== 核心组件：统一使用RedisContext ==========
     private final RedisContext redisContext;
-    
-    // ========== 系统状态 ==========
+      // ========== 系统状态 ==========
     private final boolean isMaster;
 
-    // ========== 性能优化：重用的ByteBuf ==========
-    private static final ThreadLocal<ByteBuf> propagationBuf = ThreadLocal.withInitial(() ->
-        Unpooled.buffer(4096)
-    );    /**
+    /**
      * 构造函数：基于RedisContext的解耦架构
      * 
      * @param redisContext Redis统一上下文，提供所有核心功能的访问接口
@@ -42,18 +44,42 @@ public class RespCommandHandler extends SimpleChannelInboundHandler<Resp> {
         log.info("RespCommandHandler初始化完成 - 模式: {}", 
                 isMaster ? "主节点" : "从节点");
     }
-    
-    @Override
+      @Override
     protected void channelRead0(ChannelHandlerContext ctx, Resp msg) throws Exception {
-        if(msg instanceof RespArray){
+        if (msg instanceof RespArray) {
             RespArray respArray = (RespArray) msg;
-            Resp response = processCommand(respArray,ctx);
+            Resp response = processCommand(respArray, ctx);
 
-            if(response!=null){
-                ctx.writeAndFlush(response);
+            if (response != null) {
+                //  零拷贝优化：直接写入到 Channel，避免中间缓冲
+                writeResponseDirectly(ctx, response);
             }
-        }else{
-            ctx.writeAndFlush(new Errors("不支持的命令"));
+        } else {
+            //  复用静态错误响应实例
+            writeResponseDirectly(ctx, UNSUPPORTED_COMMAND_ERROR);
+        }
+    }
+
+    /**
+     * 🚀 零拷贝响应写入：直接写入 Channel 避免额外的 ByteBuf 分配
+     * 
+     * @param ctx Channel 上下文
+     * @param response 要发送的响应
+     */
+    private void writeResponseDirectly(final ChannelHandlerContext ctx, final Resp response) {
+        try {
+            // 1. 检查 Channel 是否活跃和可写
+            if (!ctx.channel().isActive() || !ctx.channel().isWritable()) {
+                log.debug("Channel 不可写，跳过响应发送");
+                return;
+            }
+
+            // 2.  直接写入响应，让 Netty 的编码器处理零拷贝优化
+            ctx.writeAndFlush(response);
+            
+        } catch (Exception e) {
+            log.error("响应写入失败: {}", e.getMessage(), e);
+            ctx.close();
         }
     }
 
@@ -83,21 +109,19 @@ public class RespCommandHandler extends SimpleChannelInboundHandler<Resp> {
      */
     public Resp executeCommand(final RespArray command) {
         return processCommand(command, null);
-    }
-
-    private Resp processCommand(RespArray respArray, ChannelHandlerContext ctx) {
-        if(respArray.getContent().length==0){
-            return new Errors("命令不能为空");
+    }    private Resp processCommand(RespArray respArray, ChannelHandlerContext ctx) {
+        if (respArray.getContent().length == 0) {
+            return EMPTY_COMMAND_ERROR;
         }
 
         try {
             Resp[] array = respArray.getContent();
-            //高性能命令查找：直接使用哈希表，O(1) 时间复杂度
-            final RedisBytes cmd = ((BulkString)array[0]).getContent();
+            //  高性能命令查找：直接使用哈希表，O(1) 时间复杂度
+            final RedisBytes cmd = ((BulkString) array[0]).getContent();
             final CommandType commandType = CommandType.findByBytes(cmd);
             
             if (commandType == null) {
-                return new Errors("命令不存在");
+                return COMMAND_NOT_FOUND_ERROR;
             }
             
             // 1. 使用RedisContext创建命令（解耦架构）
@@ -105,76 +129,83 @@ public class RespCommandHandler extends SimpleChannelInboundHandler<Resp> {
             command.setContext(array);
 
             // 2. 特殊处理PSYNC命令
-            if(command instanceof Psync){
-                ((Psync)command).setChannelHandlerContext(ctx);
+            if (command instanceof Psync) {
+                ((Psync) command).setChannelHandlerContext(ctx);
                 final RedisNode masterNode = redisContext.getRedisNode();
-                if(masterNode != null && masterNode.isMaster()){
-                    ((Psync)command).setMasterNode(masterNode);
+                if (masterNode != null && masterNode.isMaster()) {
+                    ((Psync) command).setMasterNode(masterNode);
                 }
                 log.info("执行PSYNC命令，来自：{}", ctx.channel().remoteAddress());
-            }            final Resp result = command.handle();
+            }
 
-            // 3. 写命令处理：AOF持久化 + 主从复制传播
-            if(command.isWriteCommand()){
+            // 3. 执行命令
+            final Resp result = command.handle();
+
+            // 4. 写命令处理：AOF持久化 + 主从复制传播
+            if (command.isWriteCommand()) {
                 handleWriteCommand(respArray, commandType);
             }
 
             return result;
         } catch (Exception e) {
             log.error("命令执行失败", e);
-            return new Errors("命令执行失败");
+            return COMMAND_EXECUTION_ERROR;
         }
     }
-    
+
     /**
      * 处理写命令的持久化和复制
+     * 专注于网络层零拷贝优化，持久化层保持原有的简单设计
      * 
      * @param respArray 命令数组
      * @param commandType 命令类型
      */
     private void handleWriteCommand(final RespArray respArray, final CommandType commandType) {
-        // 1. AOF持久化
-        if(redisContext.isAofEnabled()){
+        final boolean needAof = redisContext.isAofEnabled();
+        final boolean needReplication = redisContext.isMaster();
+        
+        if (!needAof && !needReplication) {
+            return; // 无需持久化和复制
+        }
+
+        if (needAof) {
             try {
-                ByteBuf buf = propagationBuf.get();
-                buf.clear();
-                respArray.encode(respArray, buf);
-                
-                byte[] commandBytes = new byte[buf.readableBytes()];
-                buf.getBytes(buf.readerIndex(), commandBytes);
-                
-                redisContext.writeAof(commandBytes);
-                log.debug("[AOF] 写命令已持久化: {}", commandType);
+                // 使用现有的字节数组接口进行 AOF 持久化
+                final ByteBuf tempBuf = PooledByteBufAllocator.DEFAULT.buffer();
+                try {
+                    respArray.encode(respArray, tempBuf);
+                    final byte[] commandBytes = new byte[tempBuf.readableBytes()];
+                    tempBuf.readBytes(commandBytes);
+                    redisContext.writeAof(commandBytes);
+                    log.debug("[AOF] 写命令已持久化: {}", commandType);
+                } finally {
+                    tempBuf.release();
+                }
             } catch (Exception e) {
                 log.error("[AOF] 持久化失败，命令: {}, 错误: {}", commandType, e.getMessage(), e);
             }
         }
         
-        // 2. 主从复制：如果是主节点，则自动传播命令给从节点
-        if(redisContext.isMaster()){
+        if (needReplication) {
             try {
-                ByteBuf buf = propagationBuf.get();
-                buf.clear();
-                respArray.encode(respArray, buf);
-                
-                byte[] commandBytes = new byte[buf.readableBytes()];
-                buf.getBytes(buf.readerIndex(), commandBytes);
-                
-                redisContext.propagateCommand(commandBytes);
-                log.debug("[主节点] 写命令已传播: {} ({} bytes)", commandType, commandBytes.length);
+                final ByteBuf tempBuf = PooledByteBufAllocator.DEFAULT.buffer();
+                try {
+                    respArray.encode(respArray, tempBuf);
+                    final byte[] commandBytes = new byte[tempBuf.readableBytes()];
+                    tempBuf.readBytes(commandBytes);
+                    redisContext.propagateCommand(commandBytes);
+                    log.debug("[主节点] 写命令已传播: {}", commandType);
+                } finally {
+                    tempBuf.release();
+                }
             } catch (Exception e) {
                 log.error("[主节点] 命令传播失败，命令: {}, 错误: {}", commandType, e.getMessage(), e);
-            }        }
+            }
+        }
     }
 
     @Override
     public void channelInactive(ChannelHandlerContext ctx) {
-        // 清理ThreadLocal资源
-        ByteBuf buf = propagationBuf.get();
-        if (buf != null && buf.refCnt() > 0) {
-            buf.release();
-        }
-        propagationBuf.remove();
         ctx.fireChannelInactive();
     }
 }
