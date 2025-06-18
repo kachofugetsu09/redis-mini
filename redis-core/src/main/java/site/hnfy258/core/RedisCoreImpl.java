@@ -7,11 +7,17 @@ import site.hnfy258.datastructure.RedisData;
 
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Redis核心数据操作实现类
  * 
- * 注意：已移除与RedisServer的循环依赖，现在只负责纯数据操作
+ * <h2>线程安全设计：</h2>
+ * <ul>
+ *   <li><strong>数据库选择</strong>：使用AtomicInteger确保currentDBIndex的线程安全</li>
+ *   <li><strong>数据存储</strong>：依赖Dict的线程安全保证</li>
+ *   <li><strong>多线程场景</strong>：支持AofLoader、RDB加载、正常客户端请求的并发操作</li>
+ * </ul>
  * 
  * @author hnfy258
  * @since 1.0
@@ -19,7 +25,7 @@ import java.util.Set;
 public class RedisCoreImpl implements RedisCore {
     private final List<RedisDB> databases;
     private final int dbNum;
-    private int currentDBIndex = 0;
+    private final AtomicInteger currentDBIndex = new AtomicInteger(0);  // 使用AtomicInteger保证线程安全
     private CommandExecutor commandExecutor;  // 命令执行器，由上层注入
 
     /**
@@ -56,12 +62,16 @@ public class RedisCoreImpl implements RedisCore {
         }
         return null;
     }
-
-
+    /**
+     * 线程安全的数据库选择方法
+     * 
+     * @param dbIndex 数据库索引
+     * @throws RuntimeException 当数据库索引超出范围时抛出
+     */
     @Override
     public void selectDB(int dbIndex) {
         if(dbIndex >= 0 && dbIndex < dbNum){
-            currentDBIndex = dbIndex;
+            currentDBIndex.set(dbIndex);  // 原子设置
         }
         else{
             throw new RuntimeException("dbIndex out of range");
@@ -73,10 +83,14 @@ public class RedisCoreImpl implements RedisCore {
         return dbNum;
     }
 
-
+    /**
+     * 线程安全的获取当前数据库索引方法
+     * 
+     * @return 当前数据库索引
+     */
     @Override
     public int getCurrentDBIndex() {
-        return currentDBIndex;
+        return currentDBIndex.get();  // 原子读取
     }
 
     @Override
