@@ -56,17 +56,17 @@ public class RdbWriter {
                writeDb(dos,db);
            }
         }
-    }
-
-    private void writeDb(DataOutputStream dos, RedisDB db) throws IOException {
+    }    private void writeDb(DataOutputStream dos, RedisDB db) throws IOException {
         //1.写数据库id
         int databaseId = db.getId();
         RdbUtils.writeSelectDB(dos, databaseId);
-        //2.写数据库数据
-        for(Map.Entry<Object,Object> entry : db.getData().entrySet()){
-            RedisBytes key = (RedisBytes)entry.getKey();
-            RedisData value = (RedisData)entry.getValue();
-            rdbSaveObject(dos,key,value);
+        
+        //2.写数据库数据 - 使用线程安全的快照
+        Map<RedisBytes, RedisData> snapshot = db.getData().createSafeSnapshot();
+        for (Map.Entry<RedisBytes, RedisData> entry : snapshot.entrySet()) {
+            RedisBytes key = entry.getKey();
+            RedisData value = entry.getValue();
+            rdbSaveObject(dos, key, value);
         }
     }
 

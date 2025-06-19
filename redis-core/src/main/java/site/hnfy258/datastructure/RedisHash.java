@@ -41,7 +41,6 @@ public class RedisHash implements RedisData{
         for(Map.Entry<Object, Object> entry : hash.entrySet()){
             Object field = entry.getKey();
             Object value = entry.getValue();            List<Resp> hsetCommand = new ArrayList<>();
-            // 🚀 优化：使用 RedisBytes 缓存 HSET 命令
             hsetCommand.add(new BulkString(RedisBytes.fromString("HSET")));
             hsetCommand.add(new BulkString(key.getBytesUnsafe()));
             if(field instanceof RedisBytes) {
@@ -67,9 +66,7 @@ public class RedisHash implements RedisData{
 
     public Dict<RedisBytes,RedisBytes> getHash() {
         return hash;
-    }
-
-    public int del(List<RedisBytes> fields){
+    }    public int del(List<RedisBytes> fields){
         return (int)fields.stream().filter(field -> hash.remove(field) != null).count();
     }
 

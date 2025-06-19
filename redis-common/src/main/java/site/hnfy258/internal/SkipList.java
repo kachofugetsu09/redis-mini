@@ -8,6 +8,7 @@ import java.util.Random;
 
 @Slf4j
 public class SkipList <T extends Comparable<T>>{
+    //todo 改造支持并发
     private static final int MAX_LEVEL =32;
     private static final double P =0.25;
     private SkipListNode<T> head;

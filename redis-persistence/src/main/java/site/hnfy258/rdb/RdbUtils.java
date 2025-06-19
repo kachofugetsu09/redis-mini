@@ -119,15 +119,17 @@ public class RdbUtils {
         redisCore.put(key, redisList);
         log.info("加载列表到数据库{}:{}->{}",currentDbIndex,key.getString(), redisList.lrange(0, (int) (size-1)));
 
-    }
-
-    public static void saveHash(DataOutputStream dos, RedisBytes key, RedisHash value) throws IOException {
+    }    public static void saveHash(DataOutputStream dos, RedisBytes key, RedisHash value) throws IOException {
         dos.writeByte(RdbConstants.HASH_TYPE);
         writeString(dos,key.getBytes());
-        Dict<RedisBytes,RedisBytes> hash = value.getHash();        writeLength(dos,hash.size());
-        for(Map.Entry<Object, Object> entry : hash.entrySet()){
-            writeString(dos,((RedisBytes)entry.getKey()).getBytesUnsafe());
-            writeString(dos,((RedisBytes)entry.getValue()).getBytesUnsafe());
+        Dict<RedisBytes,RedisBytes> hash = value.getHash();        
+        writeLength(dos,hash.size());
+        
+        // 使用线程安全的快照避免并发问题
+        Map<RedisBytes, RedisBytes> snapshot = hash.createSafeSnapshot();
+        for(Map.Entry<RedisBytes, RedisBytes> entry : snapshot.entrySet()){
+            writeString(dos, entry.getKey().getBytesUnsafe());
+            writeString(dos, entry.getValue().getBytesUnsafe());
         }
         log.info("保存哈希表: {}", key);
     }
@@ -158,7 +160,7 @@ public class RdbUtils {
         RedisBytes key = new RedisBytes(RdbUtils.readString(dis));
         long size = RdbUtils.readLength(dis);
         RedisSet redisSet = new RedisSet();
-        List<RedisBytes> temp = new ArrayList();
+        List<RedisBytes> temp = new ArrayList<>();
         for(int i=0;i<size;i++){
             temp.add(new RedisBytes(readString(dis)));
         }
@@ -166,16 +168,19 @@ public class RdbUtils {
         redisCore.selectDB(currentDbIndex);
         redisCore.put(key, redisSet);
         log.info("加载集合到数据库{}:{}->{}",currentDbIndex,key.getString(), redisSet.getAll());
-    }
-
-    public static void saveZset(DataOutputStream dos, RedisBytes key, RedisZset value) throws IOException {
+    }    public static void saveZset(DataOutputStream dos, RedisBytes key, RedisZset value) throws IOException {
         dos.writeByte(RdbConstants.ZSET_TYPE);
         writeString(dos,key.getBytes());
-        int size = value.size();        writeLength(dos,size);
-        Iterable<? extends Map.Entry<Double, Object>> entries = value.getAll();
-        for(Map.Entry<Double, Object> entry : entries){
-            writeString(dos,String.valueOf(entry.getKey()).getBytes());
-            writeString(dos,((RedisBytes)entry.getValue()).getBytesUnsafe());
+        int size = value.size();        
+        writeLength(dos,size);
+        
+
+        Iterable<? extends Map.Entry<String, Double>> entries = value.getAll();
+        for(Map.Entry<String, Double> entry : entries){
+            // 保存分数
+            writeString(dos, String.valueOf(entry.getValue()).getBytes());
+            // 保存成员（现在entry.getKey()是成员，entry.getValue()是分数）
+            writeString(dos, RedisBytes.fromString(entry.getKey()).getBytesUnsafe());
         }
         log.info("保存有序集合: {}", key);
     }

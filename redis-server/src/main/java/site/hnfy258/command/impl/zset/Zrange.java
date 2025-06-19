@@ -5,7 +5,7 @@ import site.hnfy258.command.CommandType;
 import site.hnfy258.datastructure.RedisBytes;
 import site.hnfy258.datastructure.RedisData;
 import site.hnfy258.datastructure.RedisZset;
-import site.hnfy258.internal.SkipList;
+import site.hnfy258.datastructure.RedisZset;
 import site.hnfy258.protocal.BulkString;
 import site.hnfy258.protocal.Errors;
 import site.hnfy258.protocal.Resp;
@@ -80,34 +80,34 @@ public class Zrange implements Command {
             if(startIndex > stopIndex){
                 return new RespArray(new Resp[0]);
             }
-            
-            // 获取范围数据
-            List<SkipList.SkipListNode<String>> range;
+              // 获取范围数据
+            List<RedisZset.ZsetNode> range;
             try {
                 range = redisZset.getRange(startIndex, stopIndex);
                 if(range == null) {
                     return new RespArray(new Resp[0]);
                 }
                 
-                // 不需要再反转列表，因为已经在SkipList中正确排序
+                // 不需要再反转列表，因为已经在ConcurrentSkipListMap中正确排序
                 // Collections.reverse(range);
             } catch (Exception e) {
                 return new Errors("ERR Failed to get range: " + e.getMessage());
             }
             
             // 构建返回数据
-            List<Resp> respList = new ArrayList<>();            try {
-                for(SkipList.SkipListNode<String> node : range){
-                    if(node == null || node.member == null) {
+            List<Resp> respList = new ArrayList<>();
+            try {
+                for(RedisZset.ZsetNode node : range){
+                    if(node == null || node.getMember() == null) {
                         continue; // 跳过空节点
                     }
                     
                     // 优化：使用 RedisBytes.fromString 获得缓存和零拷贝优势
-                    final RedisBytes memberBytes = RedisBytes.fromString(node.member);
+                    final RedisBytes memberBytes = RedisBytes.fromString(node.getMember());
                     respList.add(new BulkString(memberBytes));
                     
                     if(withScores){
-                        final RedisBytes scoreBytes = RedisBytes.fromString(String.valueOf(node.score));
+                        final RedisBytes scoreBytes = RedisBytes.fromString(String.valueOf(node.getScore()));
                         respList.add(new BulkString(scoreBytes));
                     }
                 }

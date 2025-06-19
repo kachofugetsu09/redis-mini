@@ -420,33 +420,36 @@ public class AofWriter implements Writer {
         } catch (Exception e) {
             log.error("重写AOF文件的缓冲区应用时发生错误", e);
         }
-    }
-
-    private void writeDatabaseToAof(RedisDB db, FileChannel channel) {
+    }    private void writeDatabaseToAof(RedisDB db, FileChannel channel) {
         Dict<RedisBytes, RedisData> data = db.getData();
-        List<Map.Entry<Object, Object>> batch = new ArrayList<>(1000);
-        int batchSize =1000;
-        for(Map.Entry<Object, Object> entry: data.entrySet()){
+        
+        // 1. 使用线程安全的快照避免并发问题
+        Map<RedisBytes, RedisData> snapshot = data.createSafeSnapshot();
+        List<Map.Entry<RedisBytes, RedisData>> batch = new ArrayList<>(1000);
+        int batchSize = 1000;
+        
+        // 2. 分批处理快照数据
+        for (Map.Entry<RedisBytes, RedisData> entry : snapshot.entrySet()) {
             batch.add(entry);
-            if(batch.size() >= batchSize){
-                writeBatchToAof(batch,channel);
+            if (batch.size() >= batchSize) {
+                writeBatchToAof(batch, channel);
                 batch.clear();
             }
         }
-        if(!batch.isEmpty()){
-            writeBatchToAof(batch,channel);
+        
+        // 3. 处理剩余数据
+        if (!batch.isEmpty()) {
+            writeBatchToAof(batch, channel);
             batch.clear();
         }
-    }
-
-    private void writeBatchToAof(List<Map.Entry<Object, Object>> batch, FileChannel channel) {
-        for(Map.Entry<Object,Object> entry: batch){
-            RedisBytes key = (RedisBytes) entry.getKey();
-            RedisData value  = (RedisData) entry.getValue();
-            log.info("正在重写key:{}",key.getString());
-            AofUtils.writeDataToAof(key,value,channel);
+    }    private void writeBatchToAof(List<Map.Entry<RedisBytes, RedisData>> batch, FileChannel channel) {
+        for (Map.Entry<RedisBytes, RedisData> entry : batch) {
+            RedisBytes key = entry.getKey();
+            RedisData value = entry.getValue();
+            log.info("正在重写key:{}", key.getString());
+            AofUtils.writeDataToAof(key, value, channel);
         }
-    }    private void writeSelectCommand(int i, FileChannel channel) {
+    }private void writeSelectCommand(int i, FileChannel channel) {
         List<Resp> selectCommand = new ArrayList<>();
         // 🚀 优化：使用 RedisBytes 缓存 SELECT 命令
         selectCommand.add(new BulkString(RedisBytes.fromString("SELECT")));

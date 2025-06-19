@@ -39,7 +39,6 @@ public class RedisString implements RedisData{
             return Collections.emptyList();
         }            
         List<Resp> setCommand = new ArrayList<>();
-        // 🚀 优化：使用 RedisBytes 缓存 SET 命令
         setCommand.add(new BulkString(RedisBytes.fromString("SET")));
         setCommand.add(new BulkString(key.getBytesUnsafe()));
         setCommand.add(new BulkString(value.getBytes()));
