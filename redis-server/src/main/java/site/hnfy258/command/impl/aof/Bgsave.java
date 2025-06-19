@@ -35,28 +35,42 @@ public class Bgsave implements Command {
 
     }    @Override
     public Resp handle() {
-        // 使用新的兼容方式执行RDB保存，避免循环依赖
-        final boolean result = executeRdbSave();
-        if (result) {
-            return new SimpleString("OK");
+        // 使用异步方式执行RDB保存，避免阻塞
+        final boolean started = executeAsyncRdbSave();
+        if (started) {
+            return new SimpleString("Background saving started");
         }
-        return new Errors("RDB持久化失败");
-    }
-      /**
-     * 执行RDB保存操作
+        return new Errors("RDB持久化启动失败");
+    }      /**
+     * 执行异步RDB保存操作
      * 支持新旧两种模式的兼容性，避免循环依赖
      * 
-     * @return 保存是否成功
+     * @return 异步保存是否成功启动
      */
-    private boolean executeRdbSave() {
+    private boolean executeAsyncRdbSave() {
         // 1. 优先使用RedisContext模式（避免循环依赖）
         if (redisContext != null) {
-            return redisContext.saveRdb();
+            try {
+                // 启动异步保存，不等待完成
+                redisContext.bgSaveRdb().whenComplete((result, throwable) -> {
+                    if (throwable != null) {
+                        log.error("BGSAVE异步执行失败", throwable);
+                    } else if (result != null && result) {
+                        log.info("BGSAVE异步执行成功");
+                    } else {
+                        log.warn("BGSAVE异步执行返回失败");
+                    }
+                });
+                return true; // 成功启动异步操作
+            } catch (Exception e) {
+                log.error("BGSAVE启动失败", e);
+                return false;
+            }
         }
         
         // 2. RedisCore模式已移除循环依赖，无法再获取RdbManager
         // 必须使用RedisContext模式
-        log.error("无法执行RDB保存：请使用RedisContext模式的Bgsave命令");
+        log.error("无法执行BGSAVE：请使用RedisContext模式的Bgsave命令");
         return false;
     }
 

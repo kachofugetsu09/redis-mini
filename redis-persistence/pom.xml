@@ -35,10 +35,18 @@
             <artifactId>logback-classic</artifactId>
         </dependency>
 
-        <!-- 测试依赖 -->
+        <!-- JUnit 5 测试框架 -->
         <dependency>
-            <groupId>junit</groupId>
-            <artifactId>junit</artifactId>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-engine</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Mockito 测试框架 -->
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <version>4.11.0</version>
             <scope>test</scope>
         </dependency>
 

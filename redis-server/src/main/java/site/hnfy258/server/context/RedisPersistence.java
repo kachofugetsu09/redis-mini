@@ -4,6 +4,8 @@ import lombok.extern.slf4j.Slf4j;
 import site.hnfy258.aof.AofManager;
 import site.hnfy258.rdb.RdbManager;
 
+import java.util.concurrent.CompletableFuture;
+
 /**
  * Redis持久化层
  * 
@@ -76,8 +78,7 @@ public class RedisPersistence {
     }
     
     // ========== RDB持久化方法 ==========
-    
-    /**
+      /**
      * 执行RDB保存
      * 
      * @return 保存是否成功
@@ -96,6 +97,26 @@ public class RedisPersistence {
         } catch (Exception e) {
             log.error("RDB保存失败: {}", e.getMessage(), e);
             return false;
+        }
+    }
+    
+    /**
+     * 异步后台保存RDB文件 (BGSAVE)
+     * 
+     * @return CompletableFuture，异步操作的结果
+     */
+    public CompletableFuture<Boolean> bgSaveRdb() {
+        if (!rdbEnabled) {
+            log.debug("RDB未启用，跳过BGSAVE操作");
+            return CompletableFuture.completedFuture(false);
+        }
+        
+        try {
+            // 1. 执行异步RDB保存操作
+            return rdbManager.bgSaveRdb();
+        } catch (Exception e) {
+            log.error("BGSAVE启动失败: {}", e.getMessage(), e);
+            return CompletableFuture.completedFuture(false);
         }
     }
     

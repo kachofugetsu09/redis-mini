@@ -1,5 +1,6 @@
 package site.hnfy258.rdb;
 
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import site.hnfy258.core.RedisCore;
 
@@ -7,30 +8,57 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 
+/**
+ * RDB持久化管理器
+ * 
+ * <p>统一管理RDB文件的读写操作，提供同步和异步的持久化功能。
+ * 基于RedisCore接口设计，支持数据快照、文件复制、临时文件处理等
+ * 高级功能，是Redis持久化系统的核心组件。
+ * 
+ * <p>主要功能包括：
+ * <ul>
+ *     <li>RDB文件保存 - 支持同步和异步两种模式</li>
+ *     <li>RDB文件加载 - 从文件恢复Redis数据</li>
+ *     <li>快照生成 - 用于主从复制的数据同步</li>
+ *     <li>临时文件处理 - 支持内存到文件的双向转换</li>
+ * </ul>
+ * 
+ * @author hnfy258
+ * @since 1.0.0
+ */
 @Slf4j
+@Getter
 public class RdbManager {
-    private String fileName = RdbConstants.RDB_FILE_NAME;
+    
+    /** RDB文件名 */
+    private String fileName;
+    
+    /** RDB写入器 */
     private RdbWriter writer;
+    
+    /** RDB加载器 */
     private RdbLoader loader;
-      // 核心依赖：统一使用RedisCore接口
-    private final RedisCore redisCore;    /**
-     * 新增构造函数：支持RedisCore接口的版本
-     * 这是为了逐步迁移到统一上下文模式，解决循环依赖问题
+    
+    /** Redis核心接口，提供数据库访问功能 */
+    private final RedisCore redisCore;
+
+    /**
+     * 构造函数（使用默认文件名）
      * 
-     * @param redisCore Redis核心接口，提供所有核心功能的访问接口
+     * @param redisCore Redis核心接口
      */
     public RdbManager(final RedisCore redisCore) {
         this(redisCore, RdbConstants.RDB_FILE_NAME);
     }
 
     /**
-     * 新增构造函数：支持RedisCore接口的完整版本
+     * 构造函数（指定文件名）
      * 
      * @param redisCore Redis核心接口
      * @param fileName RDB文件名
-     */
-    public RdbManager(final RedisCore redisCore, final String fileName) {
+     */    public RdbManager(final RedisCore redisCore, final String fileName) {
         this.redisCore = redisCore;
         this.fileName = fileName;
         
@@ -38,28 +66,58 @@ public class RdbManager {
         this.writer = new RdbWriter(redisCore);
         this.loader = new RdbLoader(redisCore);
         
-        log.info("RdbManager使用RedisContext模式初始化完成，文件: {}", fileName);    }
+        log.info("RdbManager初始化完成，文件: {}", fileName);
+    }
 
+    /**
+     * 同步保存RDB文件
+     * 
+     * @return 保存是否成功
+     */
     public boolean saveRdb() {
         return writer.writeRdb(fileName);
     }
 
+    /**
+     * 异步保存RDB文件（BGSAVE）
+     * 
+     * @return CompletableFuture，可用于监控保存状态
+     */
+    public CompletableFuture<Boolean> bgSaveRdb() {
+        return writer.bgSaveRdb(fileName);
+    }
+
+    /**
+     * 从RDB文件加载数据
+     * 
+     * @return 加载是否成功
+     */
     public boolean loadRdb() {
         return loader.loadRdb(new File(fileName));
     }
 
+    /**
+     * 关闭管理器并释放资源
+     */
     public void close() {
         if (writer != null) {
             writer.close();
         }
     }
 
-    public byte[] createTempRdbForReplication() {
-        //1.创建一个临时的rdb文件
+    /**
+     * 为主从复制创建临时RDB文件
+     * 
+     * <p>生成临时RDB文件并返回文件内容的字节数组，
+     * 用于主从复制过程中的数据同步。
+     * 
+     * @return RDB文件内容的字节数组，失败时返回null
+     */
+    public byte[] createTempRdbForReplication() {        //1. 创建一个临时的rdb文件
         String tempFileName = "temp-repl-" + System.currentTimeMillis() + ".rdb";
         String originalFileName = this.fileName;
         try {
-            //2.临时设置文件名为临时文件
+            //2. 临时设置文件名为临时文件
             this.fileName = tempFileName;
 
             if (!saveRdb()) {
@@ -76,7 +134,7 @@ public class RdbManager {
                 log.error("读取临时RDB文件失败", e);
                 return null;
             } finally {
-                //3.删除临时文件
+                //3. 删除临时文件
                 if (tempRdbFile.exists()) {
                     if (!tempRdbFile.delete()) {
                         log.warn("无法删除临时RDB文件: {}", tempRdbFile.getAbsolutePath());
@@ -85,15 +143,22 @@ public class RdbManager {
             }
 
         } finally {
-            // 4.恢复原始文件名
+            // 4. 恢复原始文件名
             this.fileName = originalFileName;
         }
-
     }
 
+    /**
+     * 从字节数组加载RDB数据
+     * 
+     * <p>将字节数组写入临时文件，然后加载到Redis中。
+     * 主要用于主从复制中从节点接收数据的场景。
+     * 
+     * @param rdbContent RDB文件内容的字节数组
+     * @return 加载是否成功
+     */
     public boolean loadRdbFromBytes(byte[] rdbContent) {
-        if (rdbContent == null || rdbContent.length == 0) {
-            log.error("RDB内容为空，无法加载");
+        if (rdbContent == null || rdbContent.length == 0) {            log.error("RDB内容为空，无法加载");
             return false;
         }
         //生成唯一临时文件名
@@ -115,7 +180,6 @@ public class RdbManager {
             if (!success) {
                 log.error("加载临时RDB文件失败: {}", tempFileName);
                 return false;
-
             }
             log.info("临时RDB文件加载成功: {}", tempFileName);
             return true;
@@ -134,6 +198,10 @@ public class RdbManager {
     /**
      * 生成RDB快照数据
      * 
+     * <p>将当前Redis数据生成RDB快照并返回字节数组。
+     * 与createTempRdbForReplication类似，但更通用，
+     * 可用于备份、导出等场景。
+     * 
      * @return RDB快照的字节数组
      * @throws Exception 生成失败时抛出异常
      */
@@ -143,11 +211,11 @@ public class RdbManager {
         
         try {
             // 2. 写入临时文件
-            boolean success = writer.writeRdb(tempFileName);
-            if (!success) {
+            boolean success = writer.writeRdb(tempFileName);            if (!success) {
                 throw new Exception("生成RDB快照失败");
             }
-              // 3. 读取文件内容
+            
+            // 3. 读取文件内容
             File tempFile = new File(tempFileName);
             try (FileInputStream fis = new FileInputStream(tempFile)) {
                 long fileLength = tempFile.length();

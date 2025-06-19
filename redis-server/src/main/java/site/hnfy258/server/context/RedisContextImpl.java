@@ -12,6 +12,7 @@ import site.hnfy258.rdb.RdbManager;
 import site.hnfy258.server.command.executor.CommandExecutorImpl;
 
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -131,11 +132,15 @@ public class RedisContextImpl implements RedisContext {
     public void writeAof(final byte[] commandBytes) {
         persistence.writeAof(commandBytes);
     }
-    
-    @Override
+      @Override
     public boolean saveRdb() {
         return persistence.saveRdb();
-    }    
+    }
+    
+    @Override
+    public CompletableFuture<Boolean> bgSaveRdb() {
+        return persistence.bgSaveRdb();
+    }
     @Override
     public boolean loadRdb() {
         return persistence.loadRdb();

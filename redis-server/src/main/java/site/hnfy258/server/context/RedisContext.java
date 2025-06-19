@@ -8,6 +8,8 @@ import site.hnfy258.datastructure.RedisBytes;
 import site.hnfy258.datastructure.RedisData;
 import site.hnfy258.rdb.RdbManager;
 
+import java.util.concurrent.CompletableFuture;
+
 import java.util.Set;
 
 /**
@@ -80,13 +82,19 @@ public interface RedisContext {
      * @param commandBytes 命令字节数组
      */
     void writeAof(byte[] commandBytes);
-    
-    /**
+      /**
      * 执行RDB保存
      * 
      * @return 保存是否成功
      */
     boolean saveRdb();
+    
+    /**
+     * 异步后台保存RDB文件 (BGSAVE)
+     * 
+     * @return CompletableFuture，异步操作的结果
+     */
+    CompletableFuture<Boolean> bgSaveRdb();
     
     /**
      * 加载RDB文件

@@ -33,6 +33,7 @@ import site.hnfy258.server.handler.RespEncoder;
 import io.netty.channel.ChannelOption;
 import site.hnfy258.server.context.RedisContext;
 import site.hnfy258.server.context.RedisContextImpl;
+import site.hnfy258.server.config.RedisServerConfig;
 
 import java.util.UUID;
 
@@ -43,7 +44,9 @@ import java.util.concurrent.ConcurrentHashMap;
 @Getter
 @Setter
 public class RedisMiniServer implements RedisServer, ReplicationHost {
-    private static final int DEFAULT_DBCOUNT = 16;
+    
+    /** Redis服务器配置 */
+    private final RedisServerConfig config;
 
     private String host;
     private int port;    
@@ -52,58 +55,83 @@ public class RedisMiniServer implements RedisServer, ReplicationHost {
     private EventExecutorGroup commandExecutor;    
     private Channel serverChannel;
 
-    private static final boolean ENABLE_AOF = false;
     private AofManager aofManager;
-    private static final boolean ENABLE_RDB = false;
     private RdbManager rdbManager;
-    private String rdbFileName;
 
     private RedisCore redisCore;
     private RedisNode redisNode;
-    private RedisContext redisContext;    // ReplicationHost 接口相关字段
+    private RedisContext redisContext;
+    
+    // ReplicationHost 接口相关字段
     private String replicationId;
     private volatile long replicationOffset;
-
     public RedisMiniServer(String host, int port) throws Exception {
-        this(host, port, "dump.rdb", "redis.aof");
+        this(RedisServerConfig.builder()
+                .host(host)
+                .port(port)
+                .build());
     }
 
     public RedisMiniServer(String host, int port, String rdbFileName) throws Exception {
-        this(host, port, rdbFileName, "redis.aof");
+        this(RedisServerConfig.builder()
+                .host(host)
+                .port(port)
+                .rdbFileName(rdbFileName)
+                .build());
     }
 
     public RedisMiniServer(String host, int port, String rdbFileName, String aofFileName) throws Exception {
-        this.host = host;
-        this.port = port;
+        this(RedisServerConfig.builder()
+                .host(host)
+                .port(port)
+                .rdbFileName(rdbFileName)
+                .aofFileName(aofFileName)
+                .aofEnabled(true)  // 如果指定了AOF文件名，默认启用AOF
+                .build());
+    }
+
+    /**
+     * 主构造函数，使用配置对象
+     * 
+     * @param config Redis服务器配置
+     * @throws Exception 初始化异常
+     */
+    public RedisMiniServer(RedisServerConfig config) throws Exception {
+        // 1. 验证并保存配置
+        config.validate();
+        this.config = config;
         
-        // 1. 根据操作系统选择最优的EventLoopGroup实现
+        this.host = config.getHost();
+        this.port = config.getPort();        
+        // 2. 根据操作系统选择最优的EventLoopGroup实现
         initializeEventLoopGroups();
         
-        // 2. 初始化严格单线程命令执行器
+        // 3. 初始化严格单线程命令执行器
         initializeCommandExecutor();
         
-        // 3. 初始化Redis核心组件
-        this.redisCore = new RedisCoreImpl(DEFAULT_DBCOUNT);
+        // 4. 初始化Redis核心组件
+        this.redisCore = new RedisCoreImpl(config.getDatabaseCount());
         
-        // 4. 初始化RedisContext
+        // 5. 初始化RedisContext
         this.redisContext = new RedisContextImpl(redisCore, null, null, host, port);
         
-        // 5. 初始化持久化组件
-        if(ENABLE_AOF){
-            this.aofManager = new AofManager(aofFileName, redisContext.getRedisCore());
+        // 6. 初始化持久化组件
+        if (config.isAofEnabled()) {
+            this.aofManager = new AofManager(config.getAofFileName(), redisContext.getRedisCore());
             aofManager.load();
             Thread.sleep(500);
         }
         
-        if(ENABLE_RDB){
-            this.rdbManager = new RdbManager(redisCore, rdbFileName);
+        if (config.isRdbEnabled()) {
+            this.rdbManager = new RdbManager(redisCore, config.getRdbFileName());
             boolean success = rdbManager.loadRdb();
-            if(!success){
+            if (!success) {
                 log.warn("RDB文件加载失败，可能是文件不存在或格式错误");
             }
             Thread.sleep(500);
         }
-          // 6. 更新RedisContext中的持久化组件
+        
+        // 7. 更新RedisContext中的持久化组件
         this.redisContext = new RedisContextImpl(redisCore, aofManager, rdbManager, host, port);
         
         // 7. 初始化复制相关字段
