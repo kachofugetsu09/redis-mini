@@ -12,26 +12,44 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * Redis核心数据操作实现类
  * 
+ * <p>实现了RedisCore接口，提供完整的Redis数据库操作功能。
+ * 支持多数据库管理、线程安全的数据操作和命令执行能力。
+ * 
  * <h2>线程安全设计：</h2>
  * <ul>
- *   <li><strong>数据库选择</strong>：使用AtomicInteger确保currentDBIndex的线程安全</li>
- *   <li><strong>数据存储</strong>：依赖Dict的线程安全保证</li>
- *   <li><strong>多线程场景</strong>：支持AofLoader、RDB加载、正常客户端请求的并发操作</li>
+ *     <li><strong>数据库选择</strong>：使用AtomicInteger确保currentDBIndex的线程安全</li>
+ *     <li><strong>数据存储</strong>：依赖Dict的线程安全保证</li>
+ *     <li><strong>多线程场景</strong>：支持AofLoader、RDB加载、正常客户端请求的并发操作</li>
+ * </ul>
+ * 
+ * <h2>架构设计：</h2>
+ * <ul>
+ *     <li>支持命令执行器的依赖注入，实现模块间解耦</li>
+ *     <li>提供统一的数据访问接口，屏蔽底层实现细节</li>
+ *     <li>支持多数据库的动态切换和管理</li>
  * </ul>
  * 
  * @author hnfy258
- * @since 1.0
+ * @since 1.0.0
  */
 public class RedisCoreImpl implements RedisCore {
+
+    /** 数据库列表，支持多数据库功能 */
     private final List<RedisDB> databases;
+    
+    /** 数据库总数量 */
     private final int dbNum;
-    private final AtomicInteger currentDBIndex = new AtomicInteger(0);  // 使用AtomicInteger保证线程安全
-    private CommandExecutor commandExecutor;  // 命令执行器，由上层注入
+    
+    /** 当前选中的数据库索引，使用AtomicInteger保证线程安全 */
+    private final AtomicInteger currentDBIndex = new AtomicInteger(0);
+    
+    /** 命令执行器，由上层模块注入，用于命令重放等场景 */
+    private CommandExecutor commandExecutor;
 
     /**
      * 构造函数：初始化指定数量的数据库
      * 
-     * @param dbNum 数据库数量
+     * @param dbNum 数据库数量，必须为正数
      */
     public RedisCoreImpl(final int dbNum) {
         this.dbNum = dbNum;
@@ -41,6 +59,11 @@ public class RedisCoreImpl implements RedisCore {
         }
     }
 
+    /**
+     * 获取当前数据库中的所有键
+     * 
+     * @return 当前数据库中所有键的集合
+     */
     @Override
     public Set<RedisBytes> keys() {
         int dbIndex = getCurrentDBIndex();
@@ -48,20 +71,33 @@ public class RedisCoreImpl implements RedisCore {
         return db.keys();
     }
 
+    /**
+     * 向当前数据库存储键值对
+     * 
+     * @param key 键
+     * @param value 值
+     */
     @Override
     public void put(RedisBytes key, RedisData value) {
         RedisDB db = databases.get(getCurrentDBIndex());
         db.put(key, value);
     }
 
+    /**
+     * 从当前数据库获取指定键的值
+     * 
+     * @param key 要获取的键
+     * @return 对应的值，如果键不存在则返回null
+     */
     @Override
     public RedisData get(RedisBytes key) {
         RedisDB db = databases.get(getCurrentDBIndex());
-        if(db.exist(key)){
+        if (db.exist(key)) {
             return db.get(key);
         }
         return null;
     }
+
     /**
      * 线程安全的数据库选择方法
      * 
@@ -70,14 +106,18 @@ public class RedisCoreImpl implements RedisCore {
      */
     @Override
     public void selectDB(int dbIndex) {
-        if(dbIndex >= 0 && dbIndex < dbNum){
+        if (dbIndex >= 0 && dbIndex < dbNum) {
             currentDBIndex.set(dbIndex);  // 原子设置
-        }
-        else{
+        } else {
             throw new RuntimeException("dbIndex out of range");
         }
     }
 
+    /**
+     * 获取数据库总数量
+     * 
+     * @return 数据库数量
+     */
     @Override
     public int getDBNum() {
         return dbNum;
@@ -93,16 +133,33 @@ public class RedisCoreImpl implements RedisCore {
         return currentDBIndex.get();  // 原子读取
     }
 
+    /**
+     * 获取所有数据库实例
+     * 
+     * @return 包含所有数据库实例的数组
+     */
     @Override
-    public RedisDB[] getDataBases() {        return databases.toArray(new RedisDB[0]);
+    public RedisDB[] getDataBases() {
+        return databases.toArray(new RedisDB[0]);
     }
 
+    /**
+     * 清空所有数据库的数据
+     */
     @Override
     public void flushAll() {
         for (RedisDB db : databases) {
             db.clear();
         }
-    }    @Override
+    }
+
+    /**
+     * 从当前数据库删除指定键
+     * 
+     * @param key 要删除的键
+     * @return 如果键存在并被删除返回true，否则返回false
+     */
+    @Override
     public boolean delete(RedisBytes key) {
         RedisDB db = databases.get(getCurrentDBIndex());
         if (db.exist(key)) {
@@ -112,6 +169,21 @@ public class RedisCoreImpl implements RedisCore {
         return false;
     }
 
+    /**
+     * 执行Redis命令
+     * 
+     * <p>通过注入的命令执行器执行Redis命令，主要用于：
+     * <ul>
+     *     <li>AOF文件加载时的命令重放</li>
+     *     <li>RDB恢复过程中的数据重建</li>
+     *     <li>其他需要命令执行的场景</li>
+     * </ul>
+     * 
+     * @param commandName 命令名称
+     * @param args 命令参数
+     * @return 如果命令执行成功返回true，否则返回false
+     * @throws IllegalStateException 如果命令执行器未设置
+     */
     @Override
     public boolean executeCommand(String commandName, String[] args) {
         if (commandExecutor == null) {
@@ -121,9 +193,12 @@ public class RedisCoreImpl implements RedisCore {
     }
 
     /**
-     * 设置命令执行器（由redis-server层注入）
+     * 设置命令执行器
      * 
-     * @param commandExecutor 命令执行器
+     * <p>由redis-server层注入具体的命令执行器实现，
+     * 实现了依赖倒置原则。
+     * 
+     * @param commandExecutor 命令执行器实例
      */
     public void setCommandExecutor(CommandExecutor commandExecutor) {
         this.commandExecutor = commandExecutor;

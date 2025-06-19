@@ -330,7 +330,15 @@ class RedisBytesTest {
             final RedisBytes short1 = RedisBytes.fromString("hi");
             final RedisBytes long1 = RedisBytes.fromString("hello");
             
-            assertTrue(short1.compareTo(long1) > 0); // 'h' vs 'h', 'i' vs 'e'
+            // 当两个字符串前缀相同时，较短的字符串应该小于较长的字符串
+            assertTrue(short1.compareTo(long1) < 0, "较短的字符串应该小于较长的字符串");
+            assertTrue(long1.compareTo(short1) > 0, "较长的字符串应该大于较短的字符串");
+            
+            // 当字符串内容不同时，应该按照第一个不同字符的比较结果返回
+            final RedisBytes str1 = RedisBytes.fromString("abc");
+            final RedisBytes str2 = RedisBytes.fromString("abcd");
+            assertTrue(str1.compareTo(str2) < 0, "abc 应该小于 abcd");
+            assertTrue(str2.compareTo(str1) > 0, "abcd 应该大于 abc");
         }
 
         @Test

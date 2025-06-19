@@ -163,8 +163,9 @@ public final class RedisBytes implements Comparable<RedisBytes> {
             return EMPTY;
         }
 
-        // 1. 优先从缓存池获取常用命令
-        final RedisBytes cached = COMMAND_CACHE.get(str.toUpperCase());
+        // 1. 优先从缓存池获取常用命令（转换为大写以确保命令匹配）
+        final String upperStr = str.toUpperCase();
+        final RedisBytes cached = COMMAND_CACHE.get(upperStr);
         if (cached != null) {
             return cached;
         }
@@ -177,7 +178,22 @@ public final class RedisBytes implements Comparable<RedisBytes> {
             redisBytes.stringValue = str;
         }
 
+        // 4. 尝试将命令添加到缓存（如果是新的命令）
+        if (isCommandString(upperStr)) {
+            COMMAND_CACHE.putIfAbsent(upperStr, redisBytes);
+            // 确保返回缓存的实例，而不是新创建的实例
+            return COMMAND_CACHE.get(upperStr);
+        }
+
         return redisBytes;
+    }
+
+    /**
+     * 判断字符串是否可能是Redis命令
+     */
+    private static boolean isCommandString(String str) {
+        // 命令通常是大写字母组成的短字符串
+        return str.length() <= 10 && str.matches("[A-Z]+");
     }
 
     /**
@@ -198,12 +214,15 @@ public final class RedisBytes implements Comparable<RedisBytes> {
                 // 服务器命令
                 "PING", "SELECT", "SCAN", "KEYS", "INFO", "CONFIG", "DBSIZE",
                 // 持久化命令
-                "BGSAVE", "BGREWRITEAOF"
+                "SAVE", "BGSAVE", "BGREWRITEAOF"
         };
 
-        for (final String cmd : commands) {
-            final RedisBytes redisBytes = new RedisBytes(cmd.getBytes(CHARSET));
-            redisBytes.stringValue = cmd; // 预设字符串值            COMMAND_CACHE.put(cmd, redisBytes);
+        // 预创建所有常用命令的实例并放入缓存池
+        for (String cmd : commands) {
+            final byte[] bytes = cmd.getBytes(CHARSET);
+            final RedisBytes redisBytes = new RedisBytes(bytes, true);
+            redisBytes.stringValue = cmd; // 预设字符串值
+            COMMAND_CACHE.put(cmd, redisBytes);
         }
     }
 

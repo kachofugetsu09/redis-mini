@@ -9,6 +9,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import site.hnfy258.internal.Sds;
+import site.hnfy258.datastructure.RedisBytes;
 
 import java.util.Arrays;
 import java.util.Random;
@@ -764,14 +765,16 @@ class SdsTest {
      */
     static Stream<Arguments> differentStrings() {
         return Stream.of(
+            Arguments.of("Hello World", "普通ASCII字符串"),
+            Arguments.of("你好世界", "中文"),
+            Arguments.of("Hello 世界", "混合字符串"),
+            Arguments.of("👋🌍", "Emoji"),
             Arguments.of("", "空字符串"),
-            Arguments.of("a", "单字符"),
-            Arguments.of("hello", "普通英文"),
-            Arguments.of("你好", "中文"),
-            Arguments.of("🌟💻🚀", "Emoji"),
-            Arguments.of("Hello\nWorld\t!", "控制字符"),
-            Arguments.of("  spaces  ", "空格"),
-            Arguments.of("MiXeD_CaSe_123", "混合大小写数字")
+            Arguments.of("  ", "空格字符串"),
+            Arguments.of("Hello\nWorld", "包含换行"),
+            Arguments.of("Hello\tWorld", "包含制表符"),
+            Arguments.of("Hello\0World", "包含null字节"),
+            Arguments.of("Hello\u0080World", "包含扩展ASCII")
         );
     }
 
@@ -795,11 +798,16 @@ class SdsTest {
     void testDifferentStringContents(String content, String description) {
         final Sds sds = Sds.fromString(content);
         
-        assertEquals(content, sds.toString(), description + " 字符串转换失败");
-        assertEquals(content.getBytes().length, sds.length(), description + " 长度计算错误");
+        // 1. 验证字节长度
+        assertEquals(content.getBytes(RedisBytes.CHARSET).length, sds.length(), 
+                    description + " 字节长度计算错误");
         
-        // 测试复制和比较
-        final Sds duplicate = sds.duplicate();
-        assertEquals(0, sds.compare(duplicate), description + " 复制后比较失败");
+        // 2. 验证字符长度
+        assertEquals(content.length(), sds.charLength(), 
+                    description + " 字符长度计算错误");
+        
+        // 3. 验证内容正确性
+        assertEquals(content, sds.toString(), 
+                    description + " 内容不匹配");
     }
 }

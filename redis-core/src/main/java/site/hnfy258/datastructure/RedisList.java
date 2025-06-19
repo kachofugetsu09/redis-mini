@@ -10,40 +10,98 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.ConcurrentLinkedDeque;
+
+/**
+ * Redis列表数据结构实现
+ * 
+ * <p>实现了Redis的List数据类型，提供双端队列操作功能。
+ * 使用线程安全的ConcurrentLinkedDeque作为底层存储结构，
+ * 支持从列表两端进行高效的插入和删除操作。
+ * 
+ * <p>主要功能包括：
+ * <ul>
+ *     <li>左端(头部)和右端(尾部)的元素推入和弹出</li>
+ *     <li>指定范围的元素获取</li>
+ *     <li>元素移除和列表大小查询</li>
+ *     <li>支持Redis协议的序列化转换</li>
+ * </ul>
+ * 
+ * @author hnfy258
+ * @since 1.0.0
+ */
 @Setter
 @Getter
-public class RedisList implements RedisData{    private volatile long timeout = -1;
+public class RedisList implements RedisData {
+
+    /** 数据过期时间，-1表示永不过期 */
+    private volatile long timeout = -1;
+    
+    /** 底层存储结构，使用线程安全的双端队列 */
     private final ConcurrentLinkedDeque<RedisBytes> list;
+    
+    /** 关联的Redis键名 */
     private RedisBytes key;
 
+    /**
+     * 默认构造函数
+     * 
+     * <p>初始化一个空的Redis列表实例。
+     */
     public RedisList() {
         this.list = new ConcurrentLinkedDeque<>();
     }
+
+    /**
+     * 获取数据过期时间
+     * 
+     * @return 过期时间戳，-1表示永不过期
+     */
     @Override
     public long timeout() {
         return timeout;
     }
 
+    /**
+     * 设置数据过期时间
+     * 
+     * @param timeout 过期时间戳，-1表示永不过期
+     */
     @Override
     public void setTimeout(long timeout) {
         this.timeout = timeout;
     }
 
+    /**
+     * 将列表转换为Redis协议格式
+     * 
+     * <p>将当前列表转换为LPUSH命令格式的RESP数组，
+     * 用于持久化或网络传输。
+     * 
+     * @return Redis协议格式的命令列表，如果列表为空则返回空列表
+     */
     @Override
     public List<Resp> convertToResp() {
-        if(list == null || list.size() == 0){
+        if (list == null || list.size() == 0) {
             return Collections.emptyList();
-        }        List<Resp> lpushCommand = new ArrayList<>();
-
+        }
+        
+        List<Resp> lpushCommand = new ArrayList<>();
         lpushCommand.add(new BulkString(RedisBytes.fromString("LPUSH")));
         lpushCommand.add(new BulkString(key.getBytesUnsafe()));
-        for(RedisBytes value : list){
+        
+        for (RedisBytes value : list) {
             lpushCommand.add(new BulkString(value.getBytesUnsafe()));
         }
+        
         return Collections.singletonList(new RespArray(lpushCommand.toArray(new Resp[0])));
     }
 
-    public int size(){
+    /**
+     * 获取列表大小
+     * 
+     * @return 列表中元素的数量
+     */
+    public int size() {
         return list.size();
     }    /**
      * 向列表左端(头部)推入一个或多个元素

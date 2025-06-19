@@ -462,139 +462,131 @@ public class Dict<K,V> {
     }
 
     /**
-     * 缩容检查机制
-     */
-    private void checkShrinkIfNeeded() {
-        // 不在rehash状态且表足够大时才考虑缩容
-        if (rehashIndex != -1 || ht0 == null || ht0.size <= DICT_HT_INITIAL_SIZE) {
-            return;
-        }
-        
-        // 计算负载因子
-        final long usedCount = ht0.used.get();
-        final double loadFactor = usedCount > 0 ? (double) usedCount / ht0.size : 0.0;
-        
-        // 缩容条件：负载因子 < 0.1 (当元素数量小于表大小的10%时)
-        if (loadFactor < 0.1 && usedCount > 0) {
-            // 计算新的大小：下一个大于等于usedCount的2的幂次，但不小于初始大小
-            int newSize = DICT_HT_INITIAL_SIZE;
-            while (newSize < usedCount * 2) {  // 保留一些空间避免立即扩容
-                newSize *= 2;
-            }
-            
-            if (newSize < ht0.size) {
-                startRehash(newSize);
-            }        }
-    }
-
-    /**
-     * 启动渐进式rehash
+     * 执行一步渐进式rehash
      * 
-     * @param targetSize 目标表大小
-     */
-    private synchronized void startRehash(final int targetSize) {
-        if (targetSize <= 0 || rehashIndex != -1) {
-            return;
-        }
-        
-        // 确保新表大小是2的幂次
-        final int newSize = nextPowerOf2(targetSize);
-        
-        // 创建新的哈希表
-        ht1 = new DictHashTable<K, V>(newSize);
-        
-        // 开始渐进式rehash
-        rehashIndex = 0;
-    }
-
-    /**
-     * 计算大于等于给定值的最小2的幂次
-     * 
-     * @param size 给定大小
-     * @return 2的幂次
-     */
-    private int nextPowerOf2(final int size) {
-        if (size <= DICT_HT_INITIAL_SIZE) {
-            return DICT_HT_INITIAL_SIZE;
-        }
-        
-        // 使用位运算快速计算2的幂次
-        int n = size - 1;
-        n |= n >>> 1;
-        n |= n >>> 2;
-        n |= n >>> 4;
-        n |= n >>> 8;
-        n |= n >>> 16;
-        return n + 1;
-    }
-
-    /**
-     * 渐进式rehash步骤
+     * <p>每次执行rehash时，会将一定数量的桶从ht0迁移到ht1。
+     * 当所有桶都迁移完成后，将ht1设置为ht0，并清空ht1。
      */
     synchronized void rehashStep() {
-        // 状态检查
-        if (rehashIndex == -1 || ht1 == null || ht0 == null || 
-            ht0.table == null || ht1.table == null || rehashIndex >= ht0.size) {
+        // 1. 如果没有在进行rehash，直接返回
+        if (rehashIndex == -1) {
             return;
         }
 
-        int emptyVisits = 0;
-        int bucketsRehashed = 0;
+        // 2. 获取当前哈希表的本地快照引用
+        final DictHashTable<K, V> localHt0 = ht0;
+        final DictHashTable<K, V> localHt1 = ht1;
+        if (localHt0 == null || localHt1 == null) {
+            return;
+        }
 
-        // rehash循环逻辑
-        while (emptyVisits < DICT_REHASH_MAX_EMPTY_VISITS && 
-               bucketsRehashed < DICT_REHASH_BUCKETS_PER_STEP && 
-               rehashIndex < ht0.size) {
+        // 3. 迁移一定数量的桶
+        int emptyVisits = 0;
+        int maxEmptyVisits = DICT_REHASH_MAX_EMPTY_VISITS;
+        int bucketsToMove = DICT_REHASH_BUCKETS_PER_STEP;
+        
+        while (bucketsToMove > 0 && rehashIndex < localHt0.size) {
+            // 3.1 获取当前桶的引用
+            DictEntry<K, V> entry = localHt0.table.get(rehashIndex);
             
-            // 跳过空桶
-            if (ht0.table.get(rehashIndex) == null) {
-                rehashIndex++;
+            // 3.2 如果桶为空，增加空桶访问计数
+            if (entry == null) {
                 emptyVisits++;
+                if (emptyVisits >= maxEmptyVisits) {
+                    break;
+                }
+                rehashIndex++;
                 continue;
             }
 
-            // 处理整个链表
-            DictEntry<K, V> currentEntry = ht0.table.get(rehashIndex);
-            while (currentEntry != null) {
-                final DictEntry<K, V> nextEntry = currentEntry.next;
-
-                if (ht1 != null && ht1.table != null) {
-                    final int newIdx = keyIndex(currentEntry.hash, ht1.size);
-                    if (newIdx >= 0 && newIdx < ht1.size) {
-                        // 头插法插入到新表
-                        currentEntry.next = ht1.table.get(newIdx);
-                        ht1.table.set(newIdx, currentEntry);
-                        
-                        // 更新计数器
-                        ht0.used.decrementAndGet();
-                        ht1.used.incrementAndGet();
-                    }
-                } else {
-                    System.err.println("警告: rehash过程中ht1为null，跳过当前桶");
-                    break;
-                }
-
-                currentEntry = nextEntry;
+            // 3.3 迁移当前桶中的所有节点
+            while (entry != null) {
+                // 计算在新表中的位置
+                final int idx = keyIndex(entry.hash, localHt1.size);
+                
+                // 将节点插入到新表中
+                final DictEntry<K, V> next = entry.next;
+                entry.next = localHt1.table.get(idx);
+                localHt1.table.set(idx, entry);
+                
+                // 更新计数器
+                localHt0.used.decrementAndGet();
+                localHt1.used.incrementAndGet();
+                
+                entry = next;
             }
 
-            // 清空已处理的桶
-            ht0.table.set(rehashIndex, null);
+            // 3.4 清空原桶
+            localHt0.table.set(rehashIndex, null);
+            
+            // 3.5 更新计数器
+            bucketsToMove--;
             rehashIndex++;
-            bucketsRehashed++;
         }
 
-        // 检查rehash是否完成
-        if (rehashIndex >= ht0.size) {
-            if (ht1 != null) {
-                ht0 = ht1;
-                ht1 = null;
-                rehashIndex = -1;
-            } else {
-                System.err.println("错误: 完成rehash时ht1为null，重置状态");
-                rehashIndex = -1;
-            }
+        // 4. 检查是否完成rehash
+        if (rehashIndex >= localHt0.size) {
+            // 4.1 将ht1设置为ht0
+            ht0 = localHt1;
+            
+            // 4.2 清空ht1
+            ht1 = null;
+            
+            // 4.3 重置rehash索引
+            rehashIndex = -1;
         }
-    }    public void clear() {
+    }
+
+    /**
+     * 启动rehash过程
+     * 
+     * @param targetSize 目标大小（必须是2的幂次）
+     */
+    private synchronized void startRehash(final int targetSize) {
+        // 1. 如果已经在进行rehash，直接返回
+        if (rehashIndex != -1) {
+            return;
+        }
+
+        // 2. 创建新的哈希表
+        ht1 = new DictHashTable<>(targetSize);
+        
+        // 3. 设置rehash索引为0，开始rehash过程
+        rehashIndex = 0;
+        
+        // 4. 执行一步rehash
+        rehashStep();
+    }
+
+    /**
+     * 检查是否需要缩容
+     */
+    private void checkShrinkIfNeeded() {
+        // 1. 如果正在进行rehash，直接返回
+        if (rehashIndex != -1) {
+            return;
+        }
+
+        // 2. 获取当前哈希表的本地快照引用
+        final DictHashTable<K, V> localHt0 = ht0;
+        if (localHt0 == null) {
+            return;
+        }
+
+        // 3. 计算负载因子
+        final double loadFactor = (double) localHt0.used.get() / localHt0.size;
+        
+        // 4. 如果负载因子小于0.1且表大小大于初始大小，则进行缩容
+        if (loadFactor < 0.1 && localHt0.size > DICT_HT_INITIAL_SIZE) {
+            int newSize = localHt0.size / 2;
+            if (newSize < DICT_HT_INITIAL_SIZE) {
+                newSize = DICT_HT_INITIAL_SIZE;
+            }
+            startRehash(newSize);
+        }
+    }
+
+    public void clear() {
         ht0 = new DictHashTable<K, V>(DICT_HT_INITIAL_SIZE);
         ht1 = null;
         rehashIndex = -1;

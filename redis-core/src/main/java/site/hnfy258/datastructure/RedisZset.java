@@ -12,16 +12,31 @@ import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Redis有序集合实现类
- * 使用双重数据结构实现高效的有序集合操作：
- * 1. memberToScore: 成员到分数的映射，支持O(1)查找
- * 2. scoreToMembers: 分数到成员集合的有序映射，支持范围查询
+ * Redis有序集合数据结构实现类
+ * 
+ * <p>实现了Redis的Sorted Set数据类型，提供高效的有序集合操作功能。
+ * 使用双重数据结构实现O(1)的成员查找和O(log N)的有序范围查询：
+ * <ul>
+ *     <li>memberToScore: 成员到分数的映射，支持O(1)查找</li>
+ *     <li>scoreToMembers: 分数到成员集合的有序映射，支持范围查询</li>
+ * </ul>
+ * 
+ * <p>主要功能包括：
+ * <ul>
+ *     <li>按分数排序的成员管理（ZADD/ZREM）</li>
+ *     <li>按排名和分数范围的查询（ZRANGE/ZRANGEBYSCORE）</li>
+ *     <li>成员分数的获取和更新</li>
+ *     <li>支持Redis协议的序列化转换</li>
+ *     <li>线程安全的并发访问</li>
+ * </ul>
  * 
  * @author hnfy258
+ * @since 1.0.0
  */
 @Setter
 @Getter
 public class RedisZset implements RedisData {
+    
     
     /**
      * Zset节点，包含分数和成员信息
@@ -111,7 +126,9 @@ public class RedisZset implements RedisData {
             result.add(new RespArray(zaddCommand.toArray(new Resp[0])));
         }
         return result;
-    }    /**
+    }    
+    
+    /**
      * 向有序集合添加成员
      * 
      * @param score 分数
@@ -140,6 +157,7 @@ public class RedisZset implements RedisData {
         return existingScore == null; // 如果之前不存在则返回true
     }
     
+    
     /**
      * 将成员对象转换为字符串
      */
@@ -148,27 +166,43 @@ public class RedisZset implements RedisData {
             return ((RedisBytes) member).getString();
         }
         return member.toString();
-    }
-    
-    /**
-     * 添加成员到分数映射中
+    }    /**
+     * 线程安全地添加成员到分数映射中
+     * 使用ConcurrentSkipListMap的原子操作确保并发安全
      */
     private void addToScoreToMembers(final double score, final String member) {
-        scoreToMembers.computeIfAbsent(score, k -> new TreeSet<>()).add(member);
+        // 使用原子的merge操作确保线程安全
+        scoreToMembers.merge(score, createSingletonTreeSet(member), (existingSet, newSet) -> {
+            synchronized (existingSet) { // 对TreeSet操作时需要同步
+                existingSet.add(member);
+                return existingSet;
+            }
+        });
     }
     
     /**
-     * 从分数映射中移除成员
+     * 创建包含单个元素的TreeSet
+     */
+    private TreeSet<String> createSingletonTreeSet(final String member) {
+        final TreeSet<String> set = new TreeSet<>();
+        set.add(member);
+        return set;
+    }
+    
+    /**
+     * 线程安全地从分数映射中移除成员
+     * 使用ConcurrentSkipListMap的原子操作确保并发安全
      */
     private void removeFromScoreToMembers(final double score, final String member) {
-        final Set<String> members = scoreToMembers.get(score);
-        if (members != null) {
-            members.remove(member);
-            if (members.isEmpty()) {
-                scoreToMembers.remove(score);
+        scoreToMembers.computeIfPresent(score, (k, existingSet) -> {
+            synchronized (existingSet) { // 对TreeSet操作时需要同步
+                existingSet.remove(member);
+                return existingSet.isEmpty() ? null : existingSet; // 返回null会自动删除该key
             }
-        }
-    }    /**
+        });
+    }
+    
+    /**
      * 根据排名范围获取元素
      * 
      * @param start 开始位置（从0开始）
@@ -218,7 +252,9 @@ public class RedisZset implements RedisData {
         }
         
         return result;
-    }    /**
+    }    
+    
+    /**
      * 根据分数范围获取元素
      * 
      * @param min 最小分数
@@ -244,7 +280,9 @@ public class RedisZset implements RedisData {
         }
         
         return result;
-    }    /**
+    }    
+    
+    /**
      * 获取有序集合的大小
      * 
      * @return 元素数量

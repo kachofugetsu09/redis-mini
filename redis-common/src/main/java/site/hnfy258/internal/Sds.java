@@ -70,9 +70,32 @@ public abstract class Sds {
 
     // 抽象方法
     public abstract int length();
+
+    /**
+     * 获取字符长度（考虑UTF-8编码）
+     */
+    public int charLength() {
+        return new String(bytes, 0, length(), RedisBytes.CHARSET).length();
+    }
+
+    /**
+     * 获取分配的空间大小
+     */
     public abstract int alloc();
+
+    /**
+     * 清空字符串
+     */
     public abstract void clear();
+
+    /**
+     * 追加字节数组
+     */
     public abstract Sds append(byte[] extra);
+
+    /**
+     * 设置字节长度
+     */
     protected abstract void setLength(int newLength);
 
     // 通用方法
