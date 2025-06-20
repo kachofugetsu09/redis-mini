@@ -14,43 +14,73 @@ import site.hnfy258.protocal.BulkString;
 import site.hnfy258.protocal.Resp;
 import site.hnfy258.protocal.RespArray;
 
-import java.io.File;
-import java.io.FileNotFoundException;
-import java.io.IOException;
-import java.io.RandomAccessFile;
+import java.io.*;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.Files;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.LinkedBlockingDeque;
-import java.util.concurrent.TimeUnit;
+import java.util.*;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
-/** * AOF写入器 - 负责将Redis命令持久化到AOF文件
+/**
+ * AOF 文件写入器
  * 
- * <p>重构说明：原依赖RedisCore，现改为依赖RedisCore接口，实现彻底解耦</p>
+ * <p>负责将 Redis 命令持久化到 AOF 文件，支持文件预分配、重写等高级特性。
+ * 基于 RedisCore 接口设计，实现与具体 Redis 实现的解耦。
+ * 
+ * <p>核心功能：
+ * <ul>
+ *     <li>命令写入 - 将 Redis 命令追加到 AOF 文件</li>
+ *     <li>文件重写 - 支持 AOF 文件的重写和压缩</li>
+ *     <li>空间预分配 - 通过预分配提升写入性能</li>
+ *     <li>文件管理 - 安全的文件操作和备份机制</li>
+ * </ul>
+ * 
+ * <p>性能优化：
+ * <ul>
+ *     <li>空间预分配 - 减少文件系统碎片</li>
+ *     <li>批量写入 - 支持批量命令写入</li>
+ *     <li>异步重写 - 后台执行文件重写</li>
+ *     <li>安全备份 - 重写过程中保护原文件</li>
+ * </ul>
+ * 
+ * @author hnfy258
+ * @since 1.0.0
  */
 @Slf4j
 public class AofWriter implements Writer {
+    /** AOF 文件对象 */
     private File file;
+    
+    /** 文件通道，用于写入操作 */
     private FileChannel channel;
+    
+    /** 随机访问文件，用于文件操作 */
     private RandomAccessFile raf;
+    
+    /** 是否启用预分配空间 */
     private boolean isPreallocated;
+    
+    /** 文件实际大小（不包含预分配空间） */
     private AtomicLong realSize = new AtomicLong(0);
+    
+    /** 重写状态标志 */
     private final AtomicBoolean rewriting = new AtomicBoolean(false);
 
+    /** 默认重写缓冲区大小 */
     public static final int DEFAULT_REWRITE_BUFFER_SIZE = 100000;
+    
+    /** 重写缓冲区队列 */
     BlockingQueue<ByteBuffer> rewriteBufferQueue;
 
-    // ========== 核心依赖：使用RedisCore接口实现解耦 ==========
+    /** Redis 核心接口 */
     private final RedisCore redisCore;
 
-    private static final int DEFAULT_PREALLOCATE_SIZE = 4 * 1024 * 1024;    /**
+    /** 默认预分配空间大小（4MB） */
+    private static final int DEFAULT_PREALLOCATE_SIZE = 4 * 1024 * 1024;
+
+    /**
      * 构造函数：基于RedisCore接口的解耦架构
      * 
      * @param file AOF文件
@@ -115,10 +145,15 @@ public class AofWriter implements Writer {
 
         this.channel.position(currentSize);
         this.realSize.set(currentSize);
-    }
-
+    }    
+    
     @Override
     public int write(ByteBuffer buffer) throws IOException {
+        // 检查是否已关闭
+        if (channel == null || !channel.isOpen()) {
+            throw new IOException("AOF Writer 已关闭，无法执行写入操作");
+        }
+        
         //1.创建一个buffer的副本
         ByteBuffer bufferCopy = ByteBuffer.allocate(buffer.remaining());
         bufferCopy.put(buffer.duplicate());
@@ -206,30 +241,40 @@ public class AofWriter implements Writer {
             log.error("关闭AOF文件时发生错误", e);
             throw new IOException("关闭AOF文件时发生错误", e);
         }
-    }
-
-    @Override
+    }    @Override
     public boolean bgrewrite() throws IOException {
         if(rewriting.get()){
             log.warn("正在进行AOF重写，无法再次执行");
             return false;
         }
+        
+        // 检查RedisCore是否可用
+        if (redisCore == null) {
+            log.warn("RedisCore未设置，无法执行AOF重写");
+            return false;
+        }
+        
         rewriting.set(true);
         Thread rewriteThread = new Thread(this::rewriteTask);
         rewriteThread.start();
         return true;
-    }    private void rewriteTask() {
+    }
+
+    private void rewriteTask() {
         File rewriteFile = null;
         RandomAccessFile rewriteRaf = null;
         FileChannel rewriteChannel = null;
         
         try {
             log.info("开始重写aof");
+            
             // 1. 创建临时文件和FileChannel
             rewriteFile = File.createTempFile("redis_aof_temp", ".aof", file.getParentFile());
             rewriteRaf = new RandomAccessFile(rewriteFile, "rw");
             rewriteChannel = rewriteRaf.getChannel();
-            rewriteChannel.position(0);            // 2. 进行数据库的重写
+            rewriteChannel.position(0);
+            
+            // 2. 进行数据库的重写
             final RedisDB[] dataBases = redisCore.getDataBases();
             for (int i = 0; i < dataBases.length; i++) {
                 final RedisDB db = dataBases[i];
@@ -272,7 +317,7 @@ public class AofWriter implements Writer {
             rewriting.compareAndSet(true, false);
         }
     }
-    
+
     /**
      * 安全关闭重写相关资源
      */
@@ -293,7 +338,9 @@ public class AofWriter implements Writer {
                 log.warn("关闭重写RandomAccessFile时发生错误: {}", e.getMessage());
             }
         }
-    }    private void replaceAofFile(final File rewriteFile) {
+    }
+
+    private void replaceAofFile(final File rewriteFile) {
         RandomAccessFile oldRaf = null;
         FileChannel oldChannel = null;
         
@@ -399,7 +446,9 @@ public class AofWriter implements Writer {
         this.raf = new RandomAccessFile(file, "rw");
         this.channel = raf.getChannel();
         this.channel.position(realSize.get());
-    }private void applyRewriteBuffer(final FileChannel rewriteChannel) {
+    }
+
+    private void applyRewriteBuffer(final FileChannel rewriteChannel) {
         int appliedCommands = 0;
         int totalBytes = 0;
         
@@ -449,7 +498,9 @@ public class AofWriter implements Writer {
             log.info("正在重写key:{}", key.getString());
             AofUtils.writeDataToAof(key, value, channel);
         }
-    }private void writeSelectCommand(int i, FileChannel channel) {
+    }
+
+    private void writeSelectCommand(int i, FileChannel channel) {
         List<Resp> selectCommand = new ArrayList<>();
         // 🚀 优化：使用 RedisBytes 缓存 SELECT 命令
         selectCommand.add(new BulkString(RedisBytes.fromString("SELECT")));

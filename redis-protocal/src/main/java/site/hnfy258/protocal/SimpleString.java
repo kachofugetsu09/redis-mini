@@ -18,7 +18,6 @@ public class SimpleString extends Resp {
     public void encode(Resp resp, ByteBuf byteBuf) {
         byteBuf.writeByte('+');
         final SimpleString simpleString = (SimpleString) resp;
-        // 🚀 使用零拷贝路径避免重复编码
         byteBuf.writeBytes(simpleString.contentBytes.getBytesUnsafe());
         byteBuf.writeBytes(CRLF);
     }
