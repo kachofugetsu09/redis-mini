@@ -49,12 +49,11 @@ public class Append implements Command {
 
     @Override
     public Resp handle() {
-        RedisData data = redisContext.get(key);
-          if (data == null) {
+        RedisData data = redisContext.get(key);        if (data == null) {
             // 键不存在，创建新的RedisString
             Sds sds = Sds.create(value.getBytes());
             redisContext.put(key, new RedisString(sds));
-            return new RespInteger(value.getBytesUnsafe().length);
+            return RespInteger.valueOf(value.getBytesUnsafe().length);
         }
         
         if (!(data instanceof RedisString)) {
@@ -66,7 +65,7 @@ public class Append implements Command {
         redisString.getSds().append(value.getBytes());
         
         // 返回追加后的总长度 - SDS的O(1)长度获取
-        return new RespInteger(redisString.getSds().length());
+        return RespInteger.valueOf(redisString.getSds().length());
     }
 
     @Override

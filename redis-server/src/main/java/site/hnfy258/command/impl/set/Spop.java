@@ -43,25 +43,21 @@ public class Spop implements Command {
 
     @Override
     public Resp handle() {
-        RedisData redisData = redisContext.get(key);
-        if(redisData == null){
+        RedisData redisData = redisContext.get(key);        if(redisData == null){
             if(count == 1){
                 return new BulkString((RedisBytes)null);
             }
-            return new RespArray(new Resp[0]);
+            return RespArray.EMPTY;
         }
 
         if(redisData instanceof RedisSet){
-            RedisSet redisSet = (RedisSet) redisData;
-
-            if(redisSet.size() == 0){
+            RedisSet redisSet = (RedisSet) redisData;            if(redisSet.size() == 0){
                 if(count == 1) return new BulkString((RedisBytes)null);
-                return new RespArray(new Resp[0]);
+                return RespArray.EMPTY;
             }
 
-            List<RedisBytes> poppedElements = redisSet.pop(count);
-            if(poppedElements.isEmpty()){
-                return new RespArray(new Resp[0]);
+            List<RedisBytes> poppedElements = redisSet.pop(count);            if(poppedElements.isEmpty()){
+                return RespArray.EMPTY;
             }
             redisContext.put(key,redisSet);
             

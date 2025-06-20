@@ -49,10 +49,9 @@ public class Strlen implements Command {
     @Override
     public Resp handle() {
         RedisData data = redisContext.get(key);
-        
-        if (data == null) {
+          if (data == null) {
             // 键不存在，返回0
-            return new RespInteger(0);
+            return RespInteger.ZERO;
         }
         
         if (!(data instanceof RedisString)) {
@@ -64,7 +63,7 @@ public class Strlen implements Command {
         int length = redisString.getSds().length();
         
         log.debug("STRLEN key:{} length:{}", key.getString(), length);
-        return new RespInteger(length);
+        return RespInteger.valueOf(length);
     }
 
     @Override

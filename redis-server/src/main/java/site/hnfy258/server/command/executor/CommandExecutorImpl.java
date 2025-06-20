@@ -35,17 +35,17 @@ public class CommandExecutorImpl implements CommandExecutor {
             if (commandType == null) {
                 log.warn("未知命令类型: {}", commandName);
                 return false;
-            }            // 2. 构建RESP格式的参数，使用RedisBytes优化性能
+            }
+            // 2. 构建RESP格式的参数，使用RedisBytes优化性能
             Resp[] respArgs = new Resp[args.length + 1];
-            
-            // 命令名优先从缓存池获取
+              // 命令名优先从缓存池获取，使用零拷贝优化
             final RedisBytes commandBytes = RedisBytes.fromString(commandName);
-            respArgs[0] = new BulkString(commandBytes.getBytesUnsafe());
+            respArgs[0] = BulkString.wrapTrusted(commandBytes.getBytesUnsafe());
             
-            // 参数使用RedisBytes减少重复编码
+            // 参数使用RedisBytes减少重复编码，使用零拷贝优化
             for (int i = 0; i < args.length; i++) {
                 final RedisBytes argBytes = RedisBytes.fromString(args[i]);
-                respArgs[i + 1] = new BulkString(argBytes.getBytesUnsafe());
+                respArgs[i + 1] = BulkString.wrapTrusted(argBytes.getBytesUnsafe());
             }
             RespArray respArray = new RespArray(respArgs);
             

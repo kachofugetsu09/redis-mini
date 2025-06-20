@@ -60,7 +60,7 @@ public class Mset implements Command {
             RedisBatchOptimizer.batchSetStrings(redisContext.getRedisCore(), keyValuePairs);
             
             // 2. 返回成功响应
-            return new SimpleString("OK");
+            return SimpleString.OK;
             
         } catch (final Exception e) {
             log.error("MSET命令执行失败", e);

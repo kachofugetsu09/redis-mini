@@ -273,7 +273,11 @@ public class Dict<K,V> {
                 final DictEntry<K, V> newEntry = new DictEntry<>(key, value, keyHash);
                 // CAS原子操作，确保只有一个线程能成功插入
                 if (table.table.compareAndSet(idx, null, newEntry)) {
-                    table.used.incrementAndGet();
+                    // 使用do-while循环确保计数器增加成功
+                    long prev;
+                    do {
+                        prev = table.used.get();
+                    } while (!table.used.compareAndSet(prev, prev + 1));
                     return null;
                 }
                 // CAS失败，说明有其他线程已插入，重试
@@ -306,7 +310,11 @@ public class Dict<K,V> {
                 // 4. 没找到相同key，在头部插入新节点
                 final DictEntry<K, V> newEntry = new DictEntry<>(key, value, keyHash, head);
                 table.table.set(idx, newEntry);  // 原子写入
-                table.used.incrementAndGet();
+                // 使用do-while循环确保计数器增加成功
+                long prev;
+                do {
+                    prev = table.used.get();
+                } while (!table.used.compareAndSet(prev, prev + 1));
                 return null;
             }
         }
@@ -500,24 +508,49 @@ public class Dict<K,V> {
             }
 
             // 3.3 迁移当前桶中的所有节点
-            while (entry != null) {
-                // 计算在新表中的位置
-                final int idx = keyIndex(entry.hash, localHt1.size);
-                
-                // 将节点插入到新表中
-                final DictEntry<K, V> next = entry.next;
-                entry.next = localHt1.table.get(idx);
-                localHt1.table.set(idx, entry);
-                
-                // 更新计数器
-                localHt0.used.decrementAndGet();
-                localHt1.used.incrementAndGet();
-                
-                entry = next;
-            }
+            // 使用synchronized保护整个桶的迁移过程
+            synchronized (localHt0.table) {
+                // 重新检查entry，确保没有被其他线程修改
+                entry = localHt0.table.get(rehashIndex);
+                if (entry == null) {
+                    rehashIndex++;
+                    continue;
+                }
 
-            // 3.4 清空原桶
-            localHt0.table.set(rehashIndex, null);
+                // 先计算需要迁移的节点数
+                int nodeCount = 0;
+                DictEntry<K, V> countNode = entry;
+                while (countNode != null) {
+                    nodeCount++;
+                    countNode = countNode.next;
+                }
+
+                // 原子更新计数器
+                long prevHt0Used;
+                do {
+                    prevHt0Used = localHt0.used.get();
+                } while (!localHt0.used.compareAndSet(prevHt0Used, prevHt0Used - nodeCount));
+
+                long prevHt1Used;
+                do {
+                    prevHt1Used = localHt1.used.get();
+                } while (!localHt1.used.compareAndSet(prevHt1Used, prevHt1Used + nodeCount));
+
+                while (entry != null) {
+                    // 计算在新表中的位置
+                    final int idx = keyIndex(entry.hash, localHt1.size);
+                    
+                    // 将节点插入到新表中
+                    final DictEntry<K, V> next = entry.next;
+                    entry.next = localHt1.table.get(idx);
+                    localHt1.table.set(idx, entry);
+                    
+                    entry = next;
+                }
+
+                // 3.4 清空原桶
+                localHt0.table.set(rehashIndex, null);
+            }
             
             // 3.5 更新计数器
             bucketsToMove--;

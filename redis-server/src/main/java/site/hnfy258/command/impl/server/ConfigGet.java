@@ -66,7 +66,7 @@ public class ConfigGet implements Command {
     @Override
     public Resp handle() {
         if (pattern == null) {
-            return new RespArray(new Resp[0]);
+            return RespArray.EMPTY;
         }
 
         List<Resp> result = new ArrayList<>();

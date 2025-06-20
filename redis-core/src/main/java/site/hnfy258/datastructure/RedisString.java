@@ -90,12 +90,10 @@ public class RedisString implements RedisData {
     public List<Resp> convertToResp() {
         if (value == null) {
             return Collections.emptyList();
-        }
-        
-        List<Resp> setCommand = new ArrayList<>();
-        setCommand.add(new BulkString(RedisBytes.fromString("SET")));
-        setCommand.add(new BulkString(key.getBytesUnsafe()));
-        setCommand.add(new BulkString(value.getBytes()));
+        }        List<Resp> setCommand = new ArrayList<>();
+        setCommand.add(BulkString.SET);  // 使用预分配的常量
+        setCommand.add(BulkString.wrapTrusted(key.getBytesUnsafe()));
+        setCommand.add(BulkString.wrapTrusted(value.getBytes()));
         
         return Collections.singletonList(new RespArray(setCommand.toArray(new Resp[0])));
     }

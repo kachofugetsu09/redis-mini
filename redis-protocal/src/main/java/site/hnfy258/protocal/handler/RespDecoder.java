@@ -12,14 +12,36 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 /**
- * RESP协议解码器，支持标准RESP格式和INLINE命令格式
- *
+ * RESP协议解码器
+ * 
+ * <p>负责解码Redis RESP协议格式的数据，支持标准RESP格式和INLINE命令格式。
+ * 基于Netty的ByteToMessageDecoder设计，提供高性能的解码功能。
+ * 
+ * <p>主要功能包括：
+ * <ul>
+ *     <li>RESP格式解码 - 支持所有RESP数据类型的解析</li>
+ *     <li>INLINE格式解码 - 支持传统的文本命令格式</li>
+ *     <li>零拷贝优化 - 使用ByteBuf的零拷贝特性提升性能</li>
+ *     <li>错误恢复 - 支持数据不完整和格式错误的处理</li>
+ * </ul>
+ * 
+ * <p>支持的RESP类型：
+ * <ul>
+ *     <li>简单字符串 - "+OK\r\n"</li>
+ *     <li>错误消息 - "-Error message\r\n"</li>
+ *     <li>整数 - ":1000\r\n"</li>
+ *     <li>批量字符串 - "$6\r\nfoobar\r\n"</li>
+ *     <li>数组 - "*2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n"</li>
+ * </ul>
+ * 
  * @author hnfy258
+ * @since 1.0.0
  */
 @Slf4j
 public class RespDecoder extends ByteToMessageDecoder {
 
-    private static final int MAX_INLINE_LENGTH = 64 * 1024; // 64KB 最大内联命令长度
+    /** 最大内联命令长度限制 */
+    private static final int MAX_INLINE_LENGTH = 64 * 1024; // 64KB
 
     @Override
     protected void decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out) throws Exception {
@@ -39,9 +61,7 @@ public class RespDecoder extends ByteToMessageDecoder {
                 if (firstByte == '\n' || firstByte == '\r') {
                     in.skipBytes(1);
                     continue;
-                }
-
-                // 3. 判断是RESP格式还是INLINE格式
+                }                // 3. 判断是RESP格式还是INLINE格式
                 if (isValidRespType(firstByte)) {
                     // 标准RESP协议格式
                     try {
@@ -49,16 +69,23 @@ public class RespDecoder extends ByteToMessageDecoder {
                         if (resp != null) {
                             out.add(resp);
                             log.debug("成功解码RESP对象: {}", resp.getClass().getSimpleName());
-                            break; // 成功解码一个消息，退出循环
+                            return; // 成功解码一个消息，退出
                         } else {
                             // 数据不完整，等待更多数据
                             in.resetReaderIndex();
                             return;
                         }
-                    } catch (Exception e) {
+                    } catch (IllegalArgumentException e) {
+                        // RESP格式错误，跳过这个字节并继续尝试
+                        log.debug("RESP格式错误，跳过一个字节: {}", e.getMessage());
                         in.resetReaderIndex();
                         in.skipBytes(1);
-                        log.debug("RESP解码失败，跳过一个字节: {}", e.getMessage());
+                        continue;
+                    } catch (Exception e) {
+                        // 其他异常可能表示数据不完整，等待更多数据
+                        log.debug("RESP解码异常，等待更多数据: {}", e.getMessage());
+                        in.resetReaderIndex();
+                        return;
                     }
                 } else {
                     // 4. 尝试解码INLINE格式命令
@@ -66,9 +93,9 @@ public class RespDecoder extends ByteToMessageDecoder {
                     if (inlineResp != null) {
                         out.add(inlineResp);
                         log.debug("成功解码INLINE命令");
-                        break; // 成功解码一个消息，退出循环
+                        return; // 成功解码一个消息，退出
                     } else {
-                        // 数据不完整或无效，等待更多数据或跳过
+                        // 数据不完整或无效，等待更多数据
                         in.resetReaderIndex();
                         return;
                     }
@@ -202,12 +229,11 @@ public class RespDecoder extends ByteToMessageDecoder {
 
         if (parts.isEmpty()) {
             return null;
-        }
-
-        // 转换为 BulkString 数组
+        }        // 转换为 BulkString 数组，使用零拷贝方式
         final BulkString[] result = new BulkString[parts.size()];
         for (int i = 0; i < parts.size(); i++) {
-            result[i] = new BulkString(parts.get(i).getBytes(StandardCharsets.UTF_8));
+            // 使用 wrapTrusted 实现零拷贝，因为我们控制这些字节数组的生命周期
+            result[i] = BulkString.wrapTrusted(parts.get(i).getBytes(StandardCharsets.UTF_8));
         }
 
         return result;
