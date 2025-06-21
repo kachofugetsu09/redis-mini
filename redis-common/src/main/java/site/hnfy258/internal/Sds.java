@@ -21,7 +21,8 @@ public abstract class Sds {
     protected byte[] bytes;
 
     /** 最大预分配大小：1MB */
-    private static final int SDS_MAX_PREALLOC = 1024 * 1024;    /**
+    private static final int SDS_MAX_PREALLOC = 1024 * 1024;
+    /**
      * 根据初始数据创建合适类型的SDS
      * 
      * @param bytes 初始字符串内容
