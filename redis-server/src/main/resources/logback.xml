@@ -34,36 +34,36 @@
     </appender>
 
     <!-- 特定包的日志级别 -->
-    <logger name="site.hnfy258" level="INFO" additivity="false">
+    <logger name="site.hnfy258" level="WARN" additivity="false">
         <appender-ref ref="CONSOLE"/>
         <appender-ref ref="ASYNC_FILE"/>
     </logger>
 
     <!-- Netty 框架日志级别 -->
-    <logger name="io.netty" level="INFO" additivity="false">
+    <logger name="io.netty" level="WARN" additivity="false">
         <appender-ref ref="CONSOLE"/>
         <appender-ref ref="ASYNC_FILE"/>
     </logger>
 
     <!-- 复制模块详细日志 -->
-    <logger name="site.hnfy258.cluster.replication" level="INFO" additivity="false">
+    <logger name="site.hnfy258.cluster.replication" level="WARN" additivity="false">
         <appender-ref ref="CONSOLE"/>
         <appender-ref ref="ASYNC_FILE"/>
     </logger>
 
     <!-- 持久化模块日志 -->
-    <logger name="site.hnfy258.aof" level="INFO" additivity="false">
+    <logger name="site.hnfy258.aof" level="WARN" additivity="false">
         <appender-ref ref="CONSOLE"/>
         <appender-ref ref="ASYNC_FILE"/>
     </logger>
 
-    <logger name="site.hnfy258.rdb" level="INFO" additivity="false">
+    <logger name="site.hnfy258.rdb" level="WARN" additivity="false">
         <appender-ref ref="CONSOLE"/>
         <appender-ref ref="ASYNC_FILE"/>
     </logger>
 
     <!-- 根日志级别 -->
-    <root level="INFO">
+    <root level="WARN">
         <appender-ref ref="CONSOLE"/>
         <appender-ref ref="ASYNC_FILE"/>
     </root>

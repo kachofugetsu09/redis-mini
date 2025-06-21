@@ -51,7 +51,7 @@ public class RedisServerConfig {
     
     /** 是否启用AOF持久化 */
     @Builder.Default
-    private boolean aofEnabled = true;
+    private boolean aofEnabled = false;
     
     /** AOF文件路径 */
     @Builder.Default

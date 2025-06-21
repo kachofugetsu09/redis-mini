@@ -90,7 +90,8 @@ public class RedisString implements RedisData {
     public List<Resp> convertToResp() {
         if (value == null) {
             return Collections.emptyList();
-        }        List<Resp> setCommand = new ArrayList<>();
+        }        
+        List<Resp> setCommand = new ArrayList<>();
         setCommand.add(BulkString.SET);  // 使用预分配的常量
         setCommand.add(BulkString.wrapTrusted(key.getBytesUnsafe()));
         setCommand.add(BulkString.wrapTrusted(value.getBytes()));
@@ -105,7 +106,7 @@ public class RedisString implements RedisData {
      * 
      * @return 字符串的RedisBytes表示
      */
-    public RedisBytes getValue() {
+    public  RedisBytes getValue() {
         if (cachedValue == null) {
             cachedValue = new RedisBytes(value.getBytes());
         }
@@ -119,7 +120,7 @@ public class RedisString implements RedisData {
      * 
      * @return SDS对象引用
      */
-    public Sds getSds() {
+    public  Sds getSds() {
         return value;
     }
 
@@ -128,7 +129,7 @@ public class RedisString implements RedisData {
      * 
      * @param sds 新的SDS对象
      */
-    public void setSds(Sds sds) {
+    public  void setSds(Sds sds) {
         this.value = sds;
         this.cachedValue = null;
     }
@@ -141,7 +142,7 @@ public class RedisString implements RedisData {
      * @return 递增后的新值
      * @throws IllegalStateException 如果字符串不是有效的数字
      */
-    public long incr() {
+    public  long incr() {
         try {
             // 1. 解析当前值为长整型
             long cur = Long.parseLong(value.toString());
@@ -158,4 +159,6 @@ public class RedisString implements RedisData {
             throw new IllegalStateException("value is not a number");
         }
     }
+
+
 }

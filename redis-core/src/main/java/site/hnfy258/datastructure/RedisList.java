@@ -8,14 +8,14 @@ import site.hnfy258.protocal.RespArray;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedList;
 import java.util.List;
-import java.util.concurrent.ConcurrentLinkedDeque;
 
 /**
  * Redis列表数据结构实现
  * 
  * <p>实现了Redis的List数据类型，提供双端队列操作功能。
- * 使用线程安全的ConcurrentLinkedDeque作为底层存储结构，
+ * 使用LinkedList作为底层存储结构，针对单线程写入场景优化。
  * 支持从列表两端进行高效的插入和删除操作。
  * 
  * <p>主要功能包括：
@@ -24,6 +24,7 @@ import java.util.concurrent.ConcurrentLinkedDeque;
  *     <li>指定范围的元素获取</li>
  *     <li>元素移除和列表大小查询</li>
  *     <li>支持Redis协议的序列化转换</li>
+ *     <li>支持创建安全快照用于持久化</li>
  * </ul>
  * 
  * @author hnfy258
@@ -36,8 +37,8 @@ public class RedisList implements RedisData {
     /** 数据过期时间，-1表示永不过期 */
     private volatile long timeout = -1;
     
-    /** 底层存储结构，使用线程安全的双端队列 */
-    private final ConcurrentLinkedDeque<RedisBytes> list;
+    /** 底层存储结构 */
+    private final LinkedList<RedisBytes> list;
     
     /** 关联的Redis键名 */
     private RedisBytes key;
@@ -48,7 +49,7 @@ public class RedisList implements RedisData {
      * <p>初始化一个空的Redis列表实例。
      */
     public RedisList() {
-        this.list = new ConcurrentLinkedDeque<>();
+        this.list = new LinkedList<>();
     }
 
     /**
@@ -71,6 +72,7 @@ public class RedisList implements RedisData {
         this.timeout = timeout;
     }
 
+
     /**
      * 将列表转换为Redis协议格式
      * 
@@ -89,8 +91,9 @@ public class RedisList implements RedisData {
         lpushCommand.add(new BulkString(RedisBytes.fromString("LPUSH")));
         lpushCommand.add(new BulkString(key.getBytesUnsafe()));
         
-        for (RedisBytes value : list) {
-            lpushCommand.add(new BulkString(value.getBytesUnsafe()));
+        // 反向遍历列表以保持与lpush操作相同的顺序
+        for (int i = list.size() - 1; i >= 0; i--) {
+            lpushCommand.add(new BulkString(list.get(i).getBytesUnsafe()));
         }
         
         return Collections.singletonList(new RespArray(lpushCommand.toArray(new Resp[0])));
@@ -101,15 +104,22 @@ public class RedisList implements RedisData {
      * 
      * @return 列表中元素的数量
      */
-    public int size() {
+    public  int size() {
         return list.size();
-    }    /**
+    }
+
+    /**
      * 向列表左端(头部)推入一个或多个元素
      * 
      * @param values 要推入的元素
      */
     public void lpush(final RedisBytes... values) {
-        for (final RedisBytes value : values) {
+        if (values == null || values.length == 0) {
+            return;
+        }
+        
+        // 按原始顺序添加，每个新元素都会被添加到最前面
+        for (RedisBytes value : values) {
             list.addFirst(value);
         }
     }
@@ -129,7 +139,11 @@ public class RedisList implements RedisData {
      * @param values 要推入的元素
      */
     public void rpush(final RedisBytes... values) {
-        for (final RedisBytes value : values) {
+        if (values == null || values.length == 0) {
+            return;
+        }
+        
+        for (RedisBytes value : values) {
             list.addLast(value);
         }
     }
@@ -141,7 +155,9 @@ public class RedisList implements RedisData {
      */
     public RedisBytes rpop() {
         return list.pollLast();
-    }    /**
+    }
+
+    /**
      * 获取列表指定范围内的元素
      * 
      * @param start 开始索引
@@ -161,13 +177,7 @@ public class RedisList implements RedisData {
 
         // 3. 返回子列表
         if (actualStart <= actualStop && actualStart < size) {
-            final List<RedisBytes> result = new ArrayList<>();
-            final RedisBytes[] array = list.toArray(new RedisBytes[0]);
-            
-            for (int i = actualStart; i <= actualStop && i < array.length; i++) {
-                result.add(array[i]);
-            }
-            return result;
+            return new ArrayList<>(list.subList(actualStart, actualStop + 1));
         }
         return Collections.emptyList();
     }
@@ -191,7 +201,7 @@ public class RedisList implements RedisData {
      * 
      * @return 所有元素的数组
      */
-    public RedisBytes[] getAll() {
+    public synchronized RedisBytes[] getAll() {
         return list.toArray(new RedisBytes[0]);
     }
 }
