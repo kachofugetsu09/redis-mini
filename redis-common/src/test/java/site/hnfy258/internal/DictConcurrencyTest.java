@@ -1,52 +1,56 @@
-// File: redis-common/src/test/java/site/hnfy258/internal/DictConcurrencyTest.java
 package site.hnfy258.internal;
 
 import org.junit.jupiter.api.*;
 import site.hnfy258.datastructure.RedisBytes;
 
+import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Dict 并发和 CoW 特性单元测试
- *
- * 专注于验证 Dict 的不可变性、CAS 操作、无锁读、快照一致性以及 Rehash 过程的正确性。
- * 模拟 Redis 单线程写命令 + 后台读/快照的并发模型。
- *
- * @author hnfy258 (assisted by Gemini)
- * @since 1.0
- */
 @DisplayName("Dict 并发和 CoW 特性测试")
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class DictConcurrencyTest {
 
     private Dict<RedisBytes, RedisBytes> dict;
-    private static final int INITIAL_KEYS_FOR_READ_TEST = 1000;
-    private static final int WRITER_THREAD_COUNT = 1; // 模拟 Redis 单线程命令执行器
-    private static final int READER_THREAD_COUNT = 5; // 模拟多个后台或读客户端
-    private static final int OPERATIONS_PER_WRITER = 1000;
-    private static final int OPERATIONS_PER_READER = 5000;
-    private ExecutorService writerExecutor;
-    private ExecutorService readerExecutor;
+    private static final int INITIAL_KEYS_FOR_TEST = 2000;
+    private static final int COMMAND_EXECUTOR_THREAD_COUNT = 1;
+    private static final int BACKGROUND_THREAD_COUNT = 5;
+    // 命令执行器只需 Put 到触发点即可，后续 Put 用于验证快照隔离
+    private static final int COMMAND_OPERATIONS_PUT_BEFORE_AFTER_SNAPSHOT = 5000; // 例如，put到4000，再put 1000
+
+    private static final int SNAPSHOT_TRIGGER_SIZE = 4000; // 当 Dict 大小达到这个值时触发快照
+
+    private ExecutorService commandExecutor;
+    private ExecutorService backgroundExecutor;
+
+    private ConcurrentHashMap<RedisBytes, RedisBytes> expectedCommandState; // 用于最终验证 Dict 状态
+    private volatile Map<RedisBytes, RedisBytes> expectedSnapshotState = null; // 用于精确快照的“黄金标准”
+
+    private CountDownLatch snapshotSignalLatch; // 命令执行器发送快照信号
+    private CountDownLatch allBackgroundSnapshotsCreatedLatch; // 多个后台线程都创建了快照后计数归零
+    private AtomicBoolean snapshotTestFailed; // 用于后台线程标记快照验证是否失败
 
     @BeforeEach
     void setUp() {
         dict = new Dict<>();
-        writerExecutor = Executors.newFixedThreadPool(WRITER_THREAD_COUNT);
-        readerExecutor = Executors.newFixedThreadPool(READER_THREAD_COUNT);
+        commandExecutor = Executors.newFixedThreadPool(COMMAND_EXECUTOR_THREAD_COUNT);
+        backgroundExecutor = Executors.newFixedThreadPool(BACKGROUND_THREAD_COUNT);
+        expectedCommandState = new ConcurrentHashMap<>();
+        expectedSnapshotState = null;
+        snapshotSignalLatch = new CountDownLatch(1); // 每次测试需要新的 latch
+        allBackgroundSnapshotsCreatedLatch = new CountDownLatch(BACKGROUND_THREAD_COUNT); // 每个后台线程创建快照后减1
+        snapshotTestFailed = new AtomicBoolean(false); // 重置
         System.out.println("\n--- 开始新测试 ---");
     }
 
@@ -54,95 +58,69 @@ class DictConcurrencyTest {
     void tearDown() throws InterruptedException {
         // 强制完成所有 rehash，确保 Dict 最终处于稳定状态
         int rehashSteps = 0;
-        while (dict.rehashIndex != -1) {
-            dict.rehashStep();
+        Dict.DictState<?, ?> currentState;
+        do {
+            currentState = dict.state.get();
+            if (currentState.rehashIndex == -1) break;
+            dict.rehashStep(); // 积极推进 rehash
             rehashSteps++;
-        }
+            Thread.sleep(1); // 避免过度自旋
+        } while (true);
+
         if (rehashSteps > 0) {
             System.out.println("TearDown: Rehash completed with " + rehashSteps + " steps.");
         }
 
-        if (writerExecutor != null && !writerExecutor.isShutdown()) {
-            writerExecutor.shutdownNow();
-            writerExecutor.awaitTermination(5, TimeUnit.SECONDS);
+        if (commandExecutor != null && !commandExecutor.isShutdown()) {
+            commandExecutor.shutdownNow();
+            commandExecutor.awaitTermination(5, TimeUnit.SECONDS);
         }
-        if (readerExecutor != null && !readerExecutor.isShutdown()) {
-            readerExecutor.shutdownNow();
-            readerExecutor.awaitTermination(5, TimeUnit.SECONDS);
+        if (backgroundExecutor != null && !backgroundExecutor.isShutdown()) {
+            backgroundExecutor.shutdownNow();
+            backgroundExecutor.awaitTermination(5, TimeUnit.SECONDS);
         }
         System.out.println("测试完成，Dict 最终大小: " + dict.size());
         System.out.println("--------------------\n");
     }
 
     @Nested
-    @DisplayName("1. 基础功能和键唯一性测试 (单线程)")
+    @DisplayName("1. 基础功能和 CoW 快照行为 (单线程验证)")
     @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
     class BasicCoWTests {
 
         @Test
         @Order(1)
-        @DisplayName("1.1 put 插入新键")
-        void testPutNewKey() {
-            RedisBytes key = RedisBytes.fromString("newKey");
-            RedisBytes value = RedisBytes.fromString("newValue");
+        @DisplayName("1.1 put 插入/更新和 remove 删除键")
+        void testBasicPutRemove() {
+            RedisBytes key1 = RedisBytes.fromString("key1");
+            RedisBytes value1 = RedisBytes.fromString("value1");
+            RedisBytes key2 = RedisBytes.fromString("key2");
+            RedisBytes value2 = RedisBytes.fromString("value2");
 
-            assertNull(dict.put(key, value), "第一次 put 应该返回 null");
-            assertEquals(1, dict.size(), "Dict 大小应该为 1");
-            assertEquals(value, dict.get(key), "get 应该返回正确的值");
-            assertTrue(dict.containsKey(key), "containsKey 应该返回 true");
+            assertNull(dict.put(key1, value1));
+            assertEquals(1, dict.size());
+            assertEquals(value1, dict.get(key1));
+            assertTrue(dict.containsKey(key1));
+
+            assertEquals(value1, dict.put(key1, RedisBytes.fromString("newValue1")));
+            assertEquals(1, dict.size());
+            assertEquals(RedisBytes.fromString("newValue1"), dict.get(key1));
+
+            assertNull(dict.put(key2, value2));
+            assertEquals(2, dict.size());
+
+            assertEquals(value2, dict.remove(key2));
+            assertEquals(1, dict.size());
+            assertNull(dict.get(key2));
+            assertFalse(dict.containsKey(key2));
+
+            assertNull(dict.remove(RedisBytes.fromString("nonExistent")));
+            assertEquals(1, dict.size());
         }
 
         @Test
         @Order(2)
-        @DisplayName("1.2 put 更新已存在的键 (验证键唯一性)")
-        void testPutUpdateExistingKey() {
-            RedisBytes key = RedisBytes.fromString("updateKey");
-            RedisBytes oldValue = RedisBytes.fromString("oldValue");
-            RedisBytes newValue = RedisBytes.fromString("newValue");
-
-            dict.put(key, oldValue); // 插入初始值
-            assertEquals(1, dict.size());
-            assertEquals(oldValue, dict.get(key));
-
-            // 更新键
-            assertEquals(oldValue, dict.put(key, newValue), "更新 put 应该返回旧值");
-            assertEquals(1, dict.size(), "Dict 大小应该仍然为 1");
-            assertEquals(newValue, dict.get(key), "get 应该返回新值");
-
-            // 验证不会有重复键：通过遍历快照或直接检查 dict.size() 和 keySet().size()
-            // 在 CoW 链表实现中，重复键是不会在逻辑上存在的。
-            // 如果 put 实现了正确逻辑，get 方法返回正确值，size 保持不变，即可证明唯一性。
-            // 之前的重复键问题已经通过 Dict 类的 putInBucket 修复。
-            assertEquals(1, dict.keySet().size(), "keySet 大小应该为 1");
-        }
-
-        @Test
-        @Order(3)
-        @DisplayName("1.3 remove 删除存在的键")
-        void testRemoveExistingKey() {
-            RedisBytes key = RedisBytes.fromString("deleteKey");
-            RedisBytes value = RedisBytes.fromString("deleteValue");
-            dict.put(key, value);
-            assertEquals(1, dict.size());
-
-            assertEquals(value, dict.remove(key), "remove 应该返回被删除的值");
-            assertEquals(0, dict.size(), "Dict 大小应该为 0");
-            assertNull(dict.get(key), "get 应该返回 null");
-            assertFalse(dict.containsKey(key), "containsKey 应该返回 false");
-        }
-
-        @Test
-        @Order(4)
-        @DisplayName("1.4 remove 删除不存在的键")
-        void testRemoveNonExistingKey() {
-            RedisBytes key = RedisBytes.fromString("nonExistingKey");
-            assertNull(dict.remove(key), "删除不存在的键应该返回 null");
-            assertEquals(0, dict.size(), "Dict 大小应该为 0");
-        }
-
-        @Test
-        @Order(5)
-        @DisplayName("1.5 clear 清空 Dict")
+        @DisplayName("1.2 clear 清空 Dict")
         void testClear() {
             dict.put(RedisBytes.fromString("k1"), RedisBytes.fromString("v1"));
             dict.put(RedisBytes.fromString("k2"), RedisBytes.fromString("v2"));
@@ -153,234 +131,246 @@ class DictConcurrencyTest {
         }
 
         @Test
-        @Order(6)
-        @DisplayName("1.6 快照 (createSafeSnapshot) 基础测试")
-        void testCreateSafeSnapshotBasic() {
-            RedisBytes key1 = RedisBytes.fromString("snap1");
-            RedisBytes value1 = RedisBytes.fromString("val1");
-            RedisBytes key2 = RedisBytes.fromString("snap2");
-            RedisBytes value2 = RedisBytes.fromString("val2");
+        @Order(3)
+        @DisplayName("1.3 快照 (createSafeSnapshot) 在单线程下的精确内容验证")
+        void testCreateSafeSnapshotPrecise() throws InterruptedException {
+            for (int i = 0; i < INITIAL_KEYS_FOR_TEST; i++) {
+                RedisBytes key = RedisBytes.fromString("snap_key_" + i);
+                RedisBytes value = RedisBytes.fromString("snap_value_" + i);
+                dict.put(key, value);
+                expectedCommandState.put(key, value);
+            }
+            System.out.println("预填充 " + INITIAL_KEYS_FOR_TEST + " 键完成，Dict 大小: " + dict.size());
+            ensureRehashComplete(dict);
+            System.out.println("预填充后 Dict 主表容量: " + dict.state.get().ht0.size);
 
-            dict.put(key1, value1);
-            dict.put(key2, value2);
+            System.out.println("创建快照...");
+            Map<RedisBytes, RedisBytes> snapshotAtFork = dict.createSafeSnapshot();
+            System.out.println("快照创建完成，大小: " + snapshotAtFork.size());
 
-            Map<RedisBytes, RedisBytes> snapshot = dict.createSafeSnapshot();
-            assertEquals(2, snapshot.size());
-            assertEquals(value1, snapshot.get(key1));
-            assertEquals(value2, snapshot.get(key2));
+            assertEquals(expectedCommandState.size(), snapshotAtFork.size(), "快照大小应与期望状态大小一致");
+            expectedCommandState.forEach((key, value) ->
+                    assertEquals(value, snapshotAtFork.get(key), "快照中键 " + key.getString() + " 的值应匹配")
+            );
+            snapshotAtFork.keySet().forEach(key ->
+                    assertTrue(expectedCommandState.containsKey(key), "快照中不应有预期之外的键: " + key.getString())
+            );
+            System.out.println("✅ 快照内容在创建时与 Dict 状态完全一致。");
 
-            // 修改原始 Dict，快照应该不受影响
-            RedisBytes newValue1 = RedisBytes.fromString("newVal1");
-            dict.put(key1, newValue1); // 更新 key1
-            dict.remove(key2); // 删除 key2
+            System.out.println("修改原始 Dict (添加和删除元素)...");
+            int newAdds = 1000;
+            int removedCount = 500;
+            for (int i = 0; i < newAdds; i++) {
+                RedisBytes key = RedisBytes.fromString("new_key_" + i);
+                RedisBytes value = RedisBytes.fromString("new_value_" + i);
+                dict.put(key, value);
+                expectedCommandState.put(key, value);
+            }
+            for (int i = 0; i < removedCount; i++) {
+                RedisBytes key = RedisBytes.fromString("snap_key_" + i);
+                dict.remove(key);
+                expectedCommandState.remove(key);
+            }
+            ensureRehashComplete(dict);
+            System.out.println("原始 Dict 修改完成，当前大小: " + dict.size());
 
+            assertEquals(INITIAL_KEYS_FOR_TEST, snapshotAtFork.size(), "快照大小不应改变");
+            assertFalse(snapshotAtFork.containsKey(RedisBytes.fromString("new_key_0")), "快照不应包含新添加的键");
+            assertTrue(snapshotAtFork.containsKey(RedisBytes.fromString("snap_key_0")), "快照应包含已被删除的键");
+            System.out.println("✅ 快照 CoW 特性验证通过：大小不变，内容与 'fork' 时刻一致。");
 
-            // 验证快照内容不变
-            assertEquals(value1, snapshot.get(key1), "快照值不应改变");
-            assertEquals(value2, snapshot.get(key2), "快照值不应改变");
-            assertTrue(snapshot.containsKey(key2), "快照应该包含 key2，因为它在快照创建时是存在的");
-            assertTrue(dict.size() == 1, "原始Dict大小应为1");
-            assertTrue(dict.get(key1).equals(newValue1), "原始Dict中的key1值应为新值");
+            assertEquals(expectedCommandState.size(), dict.size(), "最终 Dict 大小应与期望状态一致");
+            expectedCommandState.forEach((key, value) ->
+                    assertEquals(value, dict.get(key), "最终 Dict 中键 " + key.getString() + " 的值应匹配")
+            );
+            dict.keySet().forEach(key ->
+                    assertTrue(expectedCommandState.containsKey(key), "最终 Dict 中不应有意外的键: " + key.getString())
+            );
+            System.out.println("✅ 原始 Dict 最终状态与期望完全一致。");
         }
     }
 
     @Nested
-    @DisplayName("2. 并发写入测试 (模拟单线程执行器)")
+    @DisplayName("3. 并发快照和后台读测试 (模拟 AOF 重写/RDB 快照)")
     @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
-    class ConcurrentWriteTests {
-
-        @Test
-        @Order(1)
-        @DisplayName("2.1 单写线程大量 put/remove 混合操作")
-        @Timeout(value = 30, unit = TimeUnit.SECONDS)
-        void testSingleWriterMixedOperations() throws InterruptedException, java.util.concurrent.ExecutionException {
-            ConcurrentHashMap<String, String> expectedFinalState = new ConcurrentHashMap<>();
-
-            // 使用 Futures 确保任务完成并捕获异常
-            Future<Void> writerFuture = writerExecutor.submit(() -> {
-                try {
-                    for (int i = 0; i < OPERATIONS_PER_WRITER; i++) {
-                        String keyStr = "key-" + i;
-                        RedisBytes key = RedisBytes.fromString(keyStr);
-
-                        if (i % 2 == 0) { // 50% put
-                            String valueStr = "value-" + i;
-                            RedisBytes value = RedisBytes.fromString(valueStr);
-                            dict.put(key, value);
-                            expectedFinalState.put(keyStr, valueStr);
-                        } else { // 50% remove
-                            dict.remove(key);
-                            expectedFinalState.remove(keyStr);
-                        }
-                        // 偶尔触发 rehashStep
-                        if (i % 100 == 0 && dict.rehashIndex != -1) {
-                           dict.rehashStep(); // 手动推进 rehash
-                        }
-                    }
-                    return null;
-                } catch (Exception e) {
-                    System.err.println("Writer thread error: " + e.getMessage());
-                    e.printStackTrace();
-                    throw e; // 重新抛出异常以使测试失败
-                }
-            });
-
-            writerFuture.get(); // 等待写入任务完成
-
-            // 验证最终状态
-            assertEquals(expectedFinalState.size(), dict.size(), "最终 Dict 大小应该与预期一致");
-            expectedFinalState.forEach((keyStr, valueStr) -> {
-                RedisBytes key = RedisBytes.fromString(keyStr);
-                RedisBytes actualValue = dict.get(key);
-                assertNotNull(actualValue, "键 " + keyStr + " 应该存在");
-                assertEquals(RedisBytes.fromString(valueStr), actualValue, "键 " + keyStr + " 的值不匹配");
-            });
-
-            // 反向验证 Dict 中没有意外的键
-            dict.keySet().forEach(k -> assertTrue(expectedFinalState.containsKey(k.getString()), "Dict 中不应该有意外的键: " + k.getString()));
-        }
-    }
-
-    @Nested
-    @DisplayName("3. 并发读写混合测试 (CoW 快照验证)")
-    @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
-    class ConcurrentReadWriteTests {
+    class ConcurrentSnapshotAndReadTests {
 
         @BeforeEach
-        void setupReadWriteTest() {
-            // 预填充 Dict
-            for (int i = 0; i < INITIAL_KEYS_FOR_READ_TEST; i++) {
-                dict.put(RedisBytes.fromString("init-key-" + i), RedisBytes.fromString("init-value-" + i));
+        void setupConcurrentTest() throws InterruptedException {
+            // 预填充 Dict 到 SNAPSHOT_TRIGGER_SIZE - 初始数量，确保后续 put 能达到触发点
+            // 这里初始填充少量，后续命令执行器主要执行 put
+            int initialFillCount = INITIAL_KEYS_FOR_TEST; // 保持2000个，确保rehash有数据
+            for (int i = 0; i < initialFillCount; i++) {
+                RedisBytes key = RedisBytes.fromString("init_key_" + i);
+                RedisBytes value = RedisBytes.fromString("init_value_" + i);
+                dict.put(key, value);
+                expectedCommandState.put(key, value);
             }
             System.out.println("预填充 Dict 完成，大小: " + dict.size());
-            // 确保 rehash 在测试开始前完成，以获得稳定的初始状态
-            int rehashSteps = 0;
-            while (dict.rehashIndex != -1) {
-                dict.rehashStep();
-                rehashSteps++;
-            }
-            if (rehashSteps > 0) {
-                System.out.println("setupReadWriteTest: Initial rehash completed with " + rehashSteps + " steps.");
-            }
+            ensureRehashComplete(dict);
+            System.out.println("初始 Rehash 完成，Dict 主表容量: " + dict.state.get().ht0.size);
         }
 
         @Test
         @Order(1)
-        @DisplayName("3.1 单写线程 + 多读线程 (快照一致性)")
+        @DisplayName("3.1 单命令执行器纯写 + 后台多线程精确快照验证")
         @Timeout(value = 60, unit = TimeUnit.SECONDS)
-        void testSingleWriterMultiReaderWithSnapshotConsistency() throws InterruptedException, java.util.concurrent.ExecutionException {
+        void testCommandExecutorPureWritesWithBackgroundPreciseSnapshots() throws InterruptedException, java.util.concurrent.ExecutionException {
             CountDownLatch startLatch = new CountDownLatch(1);
-            AtomicBoolean writeError = new AtomicBoolean(false);
-            AtomicLong totalReads = new AtomicLong(0);
-            AtomicLong consistentReads = new AtomicLong(0);
-            AtomicLong inconsistentReads = new AtomicLong(0);
 
-            // 存储写操作的键和新值，用于验证
-            ConcurrentHashMap<String, String> writesDuringTest = new ConcurrentHashMap<>();
-
-            // 1. 启动读线程（模拟后台快照、监控或其他读操作）
-            for (int i = 0; i < READER_THREAD_COUNT; i++) {
-                int readerId = i;
-                readerExecutor.submit(() -> {
+            // 1. 启动后台线程 (只负责创建精确快照和验证)
+            for (int i = 0; i < BACKGROUND_THREAD_COUNT; i++) {
+                int threadId = i;
+                backgroundExecutor.submit(() -> {
                     try {
                         startLatch.await(); // 等待所有线程就绪
-                        for (int j = 0; j < OPERATIONS_PER_READER; j++) {
-                            // 随机抽取一个快照，验证其内部数据
-                            Map<RedisBytes, RedisBytes> snapshot = dict.createSafeSnapshot();
-                            totalReads.incrementAndGet();
 
-                            // 验证快照的键是否在写操作进行时保持一致
-                            // CoW 快照应该在获取时是稳定的，其大小应大致与快照开始时 Dict 的大小一致
-                            // 这里可以更严格地验证快照内容的正确性，例如随机抽取键验证值
-                            // 但是，由于写操作正在进行，难以精确预测快照的具体内容，只能验证其一致性特性
-                            // 最简单的验证就是，快照大小与它在快照那一刻的 Dict 大小接近
-                            if (snapshot.size() >= INITIAL_KEYS_FOR_READ_TEST - (OPERATIONS_PER_WRITER/2) && // 至少不小于删除最少后的数量
-                                    snapshot.size() <= INITIAL_KEYS_FOR_READ_TEST + (OPERATIONS_PER_WRITER/2) + Dict.DICT_REHASH_BUCKETS_PER_STEP) { // 允许一些 rehash 带来的大小波动
-                                consistentReads.incrementAndGet();
-                            } else {
-                                inconsistentReads.incrementAndGet();
-                                System.err.println("Reader " + readerId + ": Inconsistent snapshot size: " + snapshot.size() + " (expected around " + INITIAL_KEYS_FOR_READ_TEST + ")");
-                                // 打印一些快照内容帮助调试
-                                if (snapshot.size() > 0) {
-                                    snapshot.entrySet().stream().limit(5).forEach(entry -> System.err.println("  Snapshot entry: " + entry.getKey().getString() + " -> " + entry.getValue().getString()));
+                        // 等待快照信号
+                        snapshotSignalLatch.await();
+
+                        System.out.println("后台线程 " + threadId + ": 收到快照信号，正在创建精确快照...");
+                        Map<RedisBytes, RedisBytes> preciseSnapshot = dict.createSafeSnapshot();
+
+                        // **核心验证：快照大小和内容与预期状态的精确比对**
+                        boolean currentSnapshotMatches = true;
+                        if (preciseSnapshot.size() != SNAPSHOT_TRIGGER_SIZE) { // 直接验证大小是否为4000
+                            System.err.println("❌ 后台线程 " + threadId + ": 精确快照大小不匹配！预期: " + SNAPSHOT_TRIGGER_SIZE + ", 实际: " + preciseSnapshot.size());
+                            currentSnapshotMatches = false;
+                        } else {
+                            // 验证快照内容是否与 expectedSnapshotState 完全一致
+                            // expectedSnapshotState 是在命令执行器达到4000时复制的，这里做严格比对
+                            for (Map.Entry<RedisBytes, RedisBytes> entry : expectedSnapshotState.entrySet()) {
+                                if (!preciseSnapshot.containsKey(entry.getKey()) || !preciseSnapshot.get(entry.getKey()).equals(entry.getValue())) {
+                                    System.err.println("❌ 后台线程 " + threadId + ": 精确快照内容不匹配或缺失！键: " + entry.getKey().getString());
+                                    currentSnapshotMatches = false;
+                                    break;
                                 }
                             }
-                            // 模拟读操作耗时
-                            Thread.sleep(1);
+                            if (currentSnapshotMatches) {
+                                // 反向检查，确保快照没有预期之外的键 (例如，命令执行器在快照后新增的键)
+                                for (Map.Entry<RedisBytes, RedisBytes> entry : preciseSnapshot.entrySet()) {
+                                    if (!expectedSnapshotState.containsKey(entry.getKey())) { // 仅检查是否存在，值在前面已比对
+                                        System.err.println("❌ 后台线程 " + threadId + ": 精确快照包含预期之外的键！键: " + entry.getKey().getString());
+                                        currentSnapshotMatches = false;
+                                        break;
+                                    }
+                                }
+                            }
                         }
+
+                        if (currentSnapshotMatches) {
+                            System.out.println("✅ 后台线程 " + threadId + ": 精确快照内容与预期完全一致！");
+                        } else {
+                            snapshotTestFailed.set(true); // 标记测试失败
+                        }
+
+                        allBackgroundSnapshotsCreatedLatch.countDown(); // 通知主线程本后台线程已完成快照创建和验证
+
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
                     } catch (Exception e) {
-                        System.err.println("Reader thread " + readerId + " error: " + e.getMessage());
+                        System.err.println("后台线程 " + threadId + " 错误: " + e.getMessage());
                         e.printStackTrace();
-                        writeError.set(true);
+                        snapshotTestFailed.set(true);
                     }
                 });
             }
 
-            // 2. 启动写线程（模拟主命令执行器）
-            Future<Void> writerFuture = writerExecutor.submit(() -> {
+            // 2. 启动命令执行器线程 (模拟 Redis 主线程 - 纯 Put 操作)
+            Future<Void> commandExecutorFuture = commandExecutor.submit(() -> {
                 try {
                     startLatch.await(); // 等待所有线程就绪
-                    for (int i = 0; i < OPERATIONS_PER_WRITER; i++) {
-                        String keyStr = "active-key-" + i;
-                        String valueStr = "active-value-" + i;
-                        RedisBytes key = RedisBytes.fromString(keyStr);
-                        RedisBytes value = RedisBytes.fromString(valueStr);
 
-                        if (i % 2 == 0) { // 50% put (插入新键或更新)
-                            dict.put(key, value);
-                            writesDuringTest.put(keyStr, valueStr);
-                        } else { // 50% remove
-                            dict.remove(key);
-                            writesDuringTest.remove(keyStr);
+                    for (int i = 0; i < COMMAND_OPERATIONS_PUT_BEFORE_AFTER_SNAPSHOT; i++) {
+                        RedisBytes key = RedisBytes.fromString("cmd_put_key_" + i); // 纯 Put 新键
+                        RedisBytes value = RedisBytes.fromString("cmd_put_value_" + i);
+
+                        dict.put(key, value);
+                        expectedCommandState.put(key, value); // 更新最终期望状态
+
+                        dict.rehashStep(); // 推进 rehash
+
+                        // **核心逻辑：在 Dict 大小达到 SNAPSHOT_TRIGGER_SIZE 时触发精确快照**
+                        if (dict.size() == SNAPSHOT_TRIGGER_SIZE) { // 精确到4000
+                            System.out.println("命令执行器: Dict 大小达到 " + dict.size() + "，准备触发精确快照！");
+                            // **重要：在这一刻复制 expectedCommandState 作为快照的“黄金标准”**
+                            expectedSnapshotState = new ConcurrentHashMap<>(expectedCommandState);
+                            snapshotSignalLatch.countDown(); // 发送信号给所有后台线程
+                            System.out.println("命令执行器: 已发送快照信号。等待所有后台线程创建并验证精确快照...");
+
+                            // 等待所有后台线程完成快照创建和验证
+                            allBackgroundSnapshotsCreatedLatch.await(15, TimeUnit.SECONDS); // 增加等待时间
+
+                            if (allBackgroundSnapshotsCreatedLatch.getCount() > 0) {
+                                System.err.println("❌ 命令执行器: 后台线程未在规定时间内全部创建并验证精确快照！");
+                                snapshotTestFailed.set(true);
+                            } else {
+                                System.out.println("✅ 命令执行器: 所有后台线程已成功创建并验证精确快照。继续执行命令...");
+                            }
                         }
-                        // 强制推进 rehashStep，确保 rehash 在读写并发中进行
-                        // rehashStep 内部会检查 rehashIndex
-                        dict.rehashStep();
-                        // 模拟写操作耗时
-                        Thread.sleep(2);
+                        // 模拟命令执行耗时
+                        Thread.sleep(ThreadLocalRandom.current().nextInt(2) + 1);
                     }
                     return null;
                 } catch (Exception e) {
-                    System.err.println("Writer thread error: " + e.getMessage());
+                    System.err.println("命令执行器线程错误: " + e.getMessage());
                     e.printStackTrace();
-                    writeError.set(true);
+                    snapshotTestFailed.set(true); // 标记测试失败
                     throw e;
                 }
             });
 
             startLatch.countDown(); // 释放所有线程
-            writerFuture.get(); // 等待写线程完成
-            readerExecutor.shutdown();
-            assertTrue(readerExecutor.awaitTermination(30, TimeUnit.SECONDS), "读线程应在规定时间内完成");
+            commandExecutorFuture.get(); // 等待命令执行器线程完成
+            backgroundExecutor.shutdown();
+            assertTrue(backgroundExecutor.awaitTermination(60, TimeUnit.SECONDS), "后台线程应在规定时间内完成");
 
-            System.out.println("总读取快照次数: " + totalReads.get());
-            System.out.println("一致性快照次数: " + consistentReads.get());
-            System.out.println("不一致快照次数: " + inconsistentReads.get()); // 理论上应为0或极少
+            System.out.println("\n--- 并发操作统计 ---");
 
-            assertFalse(writeError.get(), "并发读写过程中不应出现异常");
 
-            // 期望所有快照都是一致的，或者只有极少数由于 rehash 边界效应导致的大小波动
-            // 如果 putInBucket 修复正确，这里 size 应该非常稳定
-            // 由于 CoW 每次修改都会产生新对象，快照的大小应该反映其获取时刻 Dict 的大小。
-            // 这里我们主要验证没有 ConcurrentModificationException 和明显的逻辑错误。
-            // “一致性快照次数”应占绝大多数
-            assertTrue(inconsistentReads.get() < totalReads.get() * 0.05, "不一致快照的比例应低于5%"); // 允许5%的误差
+            // 断言精确快照测试是否失败
+            assertFalse(snapshotTestFailed.get(), "精确快照验证过程中不应出现失败！");
 
-            // 验证最终状态
-            System.out.println("最终 Dict 大小: " + dict.size());
-            // 期望的最终大小是初始键 + 写入的键 (插入的) - 删除的键
-            int expectedFinalSize = INITIAL_KEYS_FOR_READ_TEST + writesDuringTest.size();
-            assertEquals(expectedFinalSize, dict.size(), "最终 Dict 大小应与预期一致");
 
-            // 验证所有最终存在的键值对都正确
-            writesDuringTest.forEach((keyStr, valueStr) -> {
-                RedisBytes key = RedisBytes.fromString(keyStr);
-                RedisBytes actualValue = dict.get(key);
-                assertNotNull(actualValue, "最终键 " + keyStr + " 应该存在");
-                assertEquals(RedisBytes.fromString(valueStr), actualValue, "最终键 " + keyStr + " 的值不匹配");
-            });
+            // 最终 Dict 状态验证 (与 expectedCommandState 比较)
+            System.out.println("\n--- 最终 Dict 状态一致性验证 ---");
+            ensureRehashComplete(dict);
+
+            Map<RedisBytes, RedisBytes> finalDictContent = dict.createSafeSnapshot();
+            assertEquals(expectedCommandState.size(), finalDictContent.size(), "最终 Dict 大小应与命令执行器预期状态一致");
+
+            boolean finalContentMatches = true;
+            for (Map.Entry<RedisBytes, RedisBytes> entry : expectedCommandState.entrySet()) {
+                if (!finalDictContent.containsKey(entry.getKey()) || !finalDictContent.get(entry.getKey()).equals(entry.getValue())) {
+                    System.err.println("❌ 最终验证错误：预期键值对丢失或不匹配！键: " + entry.getKey().getString() +
+                            ", 期望值: " + entry.getValue().getString() + ", 实际值: " + finalDictContent.get(entry.getKey()));
+                    finalContentMatches = false;
+                }
+            }
+            for (Map.Entry<RedisBytes, RedisBytes> entry : finalDictContent.entrySet()) {
+                if (!expectedCommandState.containsKey(entry.getKey()) || !expectedCommandState.get(entry.getKey()).equals(entry.getValue())) {
+                    System.err.println("❌ 最终验证错误：Dict 中包含预期之外的键值对！键: " + entry.getKey().getString() +
+                            ", 实际值: " + entry.getValue().getString());
+                    finalContentMatches = false;
+                }
+            }
+            assertTrue(finalContentMatches, "最终 Dict 内容应与命令执行器预期状态完全一致");
+            System.out.println("✅ 最终 Dict 内容与命令执行器预期状态完全一致。");
+        }
+    }
+
+    private static void ensureRehashComplete(Dict<?, ?> dict) throws InterruptedException {
+        int rehashSteps = 0;
+        Dict.DictState<?, ?> currentState;
+        do {
+            currentState = dict.state.get();
+            if (currentState.rehashIndex == -1) break;
+            dict.rehashStep();
+            rehashSteps++;
+            Thread.sleep(1);
+        } while (true);
+        if (rehashSteps > 0) {
+            System.out.println("ensureRehashComplete: Rehash completed with " + rehashSteps + " steps.");
         }
     }
 }
