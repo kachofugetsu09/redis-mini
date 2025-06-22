@@ -6,6 +6,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReferenceArray;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 /**
  * <p>基于 Redis 源码设计并优化的线程安全字典（Dictionary）实现，提供高效的并发读写和渐进式 rehash 能力。
@@ -47,6 +48,11 @@ public class Dict<K,V> {
      * >=0 表示正在进行 rehash，值为当前正在迁移的 ht0 桶的索引。
      */
     volatile int rehashIndex;
+
+    /** 用于协调 rehash 和快照操作的读写锁。*/
+    private final ReentrantReadWriteLock rwLock = new ReentrantReadWriteLock();
+    private final ReentrantReadWriteLock.ReadLock readLock = rwLock.readLock();
+    private final ReentrantReadWriteLock.WriteLock writeLock = rwLock.writeLock();
 
     /**
      * 检查字典中是否包含指定的键。
@@ -608,100 +614,76 @@ public class Dict<K,V> {
      * <p>此方法由 {@code put}, {@code remove}, {@code get} 等操作触发，确保 rehash 过程逐步进行，避免阻塞。
      */
     void rehashStep() {
-        // 1. 如果没有在进行 rehash，直接返回。
-        if (rehashIndex == -1) {
-            return;
-        }
+        writeLock.lock(); // 获取写锁
+        try {
+            if (rehashIndex == -1) {
+                return;
+            }
 
-        // 2. 获取当前哈希表的本地快照引用，确保在 rehash 过程中的引用一致性。
-        final DictHashTable<K, V> localHt0 = ht0;
-        final DictHashTable<K, V> localHt1 = ht1;
+            final DictHashTable<K, V> localHt0 = ht0;
+            final DictHashTable<K, V> localHt1 = ht1;
 
-        // 边界检查：如果 rehash 过程中 ht0 或 ht1 意外变为 null，则可能 rehash 已完成或处于异常状态。
-        // 此时检查 ht0 是否已清空，若清空则完成 rehash。
-        if (localHt0 == null || localHt1 == null) {
-            if (localHt0 != null && rehashIndex >= localHt0.size && localHt0.used.get() == 0) {
-                ht0 = localHt1; // 如果 ht0 确实已清空，则完成 rehash。
+            if (localHt0 == null || localHt1 == null) {
+                if (localHt0 != null && rehashIndex >= localHt0.size && localHt0.used.get() == 0) {
+                    ht0 = localHt1;
+                    ht1 = null;
+                    rehashIndex = -1;
+                }
+                return;
+            }
+
+            int emptyVisits = 0;
+            int maxEmptyVisits = DICT_REHASH_MAX_EMPTY_VISITS;
+            int bucketsToMove = DICT_REHASH_BUCKETS_PER_STEP;
+
+            while (bucketsToMove > 0 && rehashIndex < localHt0.size) {
+                DictEntry<K, V> entryToMove = localHt0.table.get(rehashIndex);
+
+                if (entryToMove == null) {
+                    emptyVisits++;
+                    if (emptyVisits >= maxEmptyVisits) {
+                        break;
+                    }
+                    rehashIndex++;
+                    bucketsToMove--;
+                    continue;
+                }
+
+                while (entryToMove != null) {
+                    final DictEntry<K, V> currentEntry = entryToMove;
+                    final DictEntry<K, V> nextEntryInHt0 = currentEntry.next;
+
+                    final int targetIdx = keyIndex(currentEntry.hash, localHt1.size);
+
+                    // 在写锁保护下，CAS 仍然是原子操作，但现在它不会与快照遍历冲突
+                    boolean casSuccess = false;
+                    while (!casSuccess) {
+                        DictEntry<K, V> oldHeadInHt1 = localHt1.table.get(targetIdx);
+                        DictEntry<K, V> newHeadInHt1 = new DictEntry<>(
+                                currentEntry.hash, currentEntry.key, currentEntry.value, oldHeadInHt1);
+                        casSuccess = localHt1.table.compareAndSet(targetIdx, oldHeadInHt1, newHeadInHt1);
+                    }
+
+                    localHt0.used.decrementAndGet();
+                    localHt1.used.incrementAndGet();
+
+                    entryToMove = nextEntryInHt0;
+                }
+
+                localHt0.table.set(rehashIndex, null); // 确保在写锁保护下进行
+
+                bucketsToMove--;
+                rehashIndex++;
+                emptyVisits = 0;
+            }
+
+            if (rehashIndex >= localHt0.size && localHt0.used.get() == 0) {
+                ht0 = localHt1;
                 ht1 = null;
                 rehashIndex = -1;
             }
-            return;
-        }
-
-
-        // 3. 迁移一定数量的桶。
-        int emptyVisits = 0; // 连续访问空桶的计数器。
-        int maxEmptyVisits = DICT_REHASH_MAX_EMPTY_VISITS;
-        int bucketsToMove = DICT_REHASH_BUCKETS_PER_STEP;
-
-        // 循环迁移指定数量的桶，或直到所有 ht0 的桶都已处理完毕。
-        while (bucketsToMove > 0 && rehashIndex < localHt0.size) {
-            // 3.1 获取当前 ht0 桶的头节点。
-            DictEntry<K, V> entryToMove = localHt0.table.get(rehashIndex);
-
-            // 3.2 如果桶为空，增加空桶访问计数。
-            // 达到最大空桶访问次数时，提前结束本次 rehash 步骤，避免不必要的遍历。
-            if (entryToMove == null) {
-                emptyVisits++;
-                if (emptyVisits >= maxEmptyVisits) {
-                    break;
-                }
-                rehashIndex++; // 即使是空桶，也要递增 rehashIndex 并继续处理下一个桶。
-                bucketsToMove--; // 即使空桶也算作一个已处理的桶。
-                continue;
-            }
-
-            // 3.3 迁移当前桶中的所有节点到 ht1。
-            // 由于 DictEntry 是不可变的，我们不能直接修改 entry.next。
-            // 而是通过头插法，将每个 entryToMove 节点复制并插入到 ht1 的目标桶链表的头部。
-            while (entryToMove != null) {
-                final DictEntry<K, V> currentEntry = entryToMove; // 当前要处理的节点。
-                final DictEntry<K, V> nextEntryInHt0 = currentEntry.next; // 保存 ht0 中当前节点的下一个节点。
-
-                // 计算在新表 ht1 中的目标索引。
-                final int targetIdx = keyIndex(currentEntry.hash, localHt1.size);
-
-                // 将当前节点 (currentEntry) 插入到 ht1 目标桶链表的头部。
-                // 使用 CAS 循环确保原子性，因为它涉及修改 ht1 的桶头。
-                // 即使 rehashStep 方法本身不加锁，内部对 AtomicReferenceArray 的操作也必须是原子的。
-                boolean casSuccess = false;
-                while (!casSuccess) {
-                    DictEntry<K, V> oldHeadInHt1 = localHt1.table.get(targetIdx); // 获取 ht1 当前桶头。
-                    // 创建新头节点，其 next 指向 ht1 的旧头，实现头插。
-                    DictEntry<K, V> newHeadInHt1 = new DictEntry<>(
-                            currentEntry.hash, currentEntry.key, currentEntry.value, oldHeadInHt1);
-
-                    casSuccess = localHt1.table.compareAndSet(targetIdx, oldHeadInHt1, newHeadInHt1);
-                }
-
-                // 更新计数器：从 ht0 移走一个，向 ht1 增加一个。
-                localHt0.used.decrementAndGet();
-                localHt1.used.incrementAndGet();
-
-                entryToMove = nextEntryInHt0; // 移动到 ht0 中的下一个节点。
-            }
-
-            // 3.4 清空 ht0 中的原桶 (原子设置为 null)。
-            // 确保该桶不再被 ht0 引用，便于垃圾回收。
-            localHt0.table.set(rehashIndex, null);
-
-            // 3.5 更新计数器并重置空桶访问计数。
-            bucketsToMove--;
-            rehashIndex++;
-            emptyVisits = 0; // 重置 emptyVisits，因为我们成功处理了一个非空桶。
-        }
-
-        // 4. 检查是否完成 rehash。
-        // 当 rehashIndex 达到 ht0 的大小，并且 ht0 中所有元素都已迁移 (ht0.used.get() == 0)。
-        if (rehashIndex >= localHt0.size && localHt0.used.get() == 0) {
-            // 4.1 将 ht1 设置为新的主哈希表 ht0。
-            ht0 = localHt1;
-
-            // 4.2 清空 ht1 (将其置为 null)，释放资源。
-            ht1 = null;
-
-            // 4.3 重置 rehash 索引，表示 rehash 过程结束。
-            rehashIndex = -1;
+        } finally {
+            writeLock.unlock(); // 释放写锁
         }
     }
 
@@ -712,20 +694,18 @@ public class Dict<K,V> {
      *
      * @param targetSize 新哈希表的目标大小（必须是 2 的幂次）。
      */
-    private  void startRehash(final int targetSize) {
-        // 后续的 rehashStep() 可以在无锁状态下进行。
-        if (rehashIndex != -1) { // 如果已经在进行 rehash，直接返回。
-            return;
+    private void startRehash(final int targetSize) {
+        writeLock.lock(); // 获取写锁
+        try {
+            if (rehashIndex != -1) {
+                return;
+            }
+            ht1 = new DictHashTable<>(targetSize);
+            rehashIndex = 0;
+            rehashStep(); // 会重入写锁，是安全的
+        } finally {
+            writeLock.unlock(); // 释放写锁
         }
-
-        // 2. 创建新的哈希表 ht1。
-        ht1 = new DictHashTable<>(targetSize);
-
-        // 3. 设置 rehash 索引为 0，开始 rehash 过程。
-        rehashIndex = 0;
-
-        // 4. 立即执行一步 rehash，避免延迟。
-        rehashStep();
     }
 
     /**
@@ -764,9 +744,14 @@ public class Dict<K,V> {
      * 通过重新初始化主哈希表来实现，并重置 rehash 状态。
      */
     public void clear() {
-        ht0 = new DictHashTable<>(DICT_HT_INITIAL_SIZE);
-        ht1 = null;
-        rehashIndex = -1;
+        writeLock.lock(); // 获取写锁
+        try {
+            ht0 = new DictHashTable<K, V>(DICT_HT_INITIAL_SIZE);
+            ht1 = null;
+            rehashIndex = -1;
+        } finally {
+            writeLock.unlock(); // 释放写锁
+        }
     }
 
     /**
@@ -923,26 +908,34 @@ public class Dict<K,V> {
      */
     public Map<K, V> createSafeSnapshot() {
         final Map<K, V> snapshot = new HashMap<>();
+        readLock.lock();
+        try{
+            // 核心修改：移除 rehashStep() 的调用。
+            // 快照应该反映调用它那一刻的数据状态，不应该在快照过程中修改 Dict 的内部状态。
+            // rehash 的推进应该只由 put 和 remove 等写操作触发和完成。
 
-        // 核心修改：移除 rehashStep() 的调用。
-        // 快照应该反映调用它那一刻的数据状态，不应该在快照过程中修改 Dict 的内部状态。
-        // rehash 的推进应该只由 put 和 remove 等写操作触发和完成。
+            // 1. 原子获取哈希表快照引用。
+            // volatile 字段保证可见性，本地快照引用确保在遍历期间不会因其他线程的 rehash 进程而改变指向。
+            final DictHashTable<K, V> localHt0 = ht0;
+            final DictHashTable<K, V> localHt1 = ht1; // ht1 在 rehash 过程中可能不为 null。
+            final int localRehashIndex = rehashIndex; // 记录快照获取时的 rehash 状态。
 
-        // 1. 原子获取哈希表快照引用。
-        // volatile 字段保证可见性，本地快照引用确保在遍历期间不会因其他线程的 rehash 进程而改变指向。
-        final DictHashTable<K, V> localHt0 = ht0;
-        final DictHashTable<K, V> localHt1 = ht1; // ht1 在 rehash 过程中可能不为 null。
-        final int localRehashIndex = rehashIndex; // 记录快照获取时的 rehash 状态。
+            // 2. 遍历 ht0 快照并将其数据添加到 snapshot。
+            createSnapshotFromTable(localHt0, snapshot);
 
-        // 2. 遍历 ht0 快照并将其数据添加到 snapshot。
-        createSnapshotFromTable(localHt0, snapshot);
-
-        // 3. 如果正在 rehash，也遍历 ht1 快照并将其数据添加到 snapshot。
-        // 这里的 localRehashIndex 和 localHt1 反映了快照获取时 Dict 的实际状态。
-        // 由于 HashMap 的 put 方法会覆盖相同键的值，这天然处理了 rehash 过程中同一键在 ht0 和 ht1 的情况，
-        // 最终快照中将包含 ht1 中的最新值。
-        if (localRehashIndex != -1 && localHt1 != null) {
-            createSnapshotFromTable(localHt1, snapshot);
+            // 3. 如果正在 rehash，也遍历 ht1 快照并将其数据添加到 snapshot。
+            // 这里的 localRehashIndex 和 localHt1 反映了快照获取时 Dict 的实际状态。
+            // 由于 HashMap 的 put 方法会覆盖相同键的值，这天然处理了 rehash 过程中同一键在 ht0 和 ht1 的情况，
+            // 最终快照中将包含 ht1 中的最新值。
+            if (localRehashIndex != -1 && localHt1 != null) {
+                createSnapshotFromTable(localHt1, snapshot);
+            }
+        }
+        catch(Exception e){
+            throw new RuntimeException("Error creating snapshot: " + e.getMessage(), e);
+        }
+        finally {
+            readLock.unlock();
         }
         return snapshot;
     }
