@@ -47,7 +47,7 @@ public class Srem implements Command {
                 log.info("remove {} from set {}", member.getString(), key.getString());
             }
         }
-        return new RespInteger(count);
+        return RespInteger.valueOf(count);
     }
 
     @Override

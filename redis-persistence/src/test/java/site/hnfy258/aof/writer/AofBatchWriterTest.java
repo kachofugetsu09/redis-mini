@@ -522,19 +522,27 @@ class AofBatchWriterTest {
                 
                 // 强制完成所有批次
                 batchWriter.flush(2000);
-                  // Then: 验证批处理效率
+                
+                // Then: 验证批处理效率
                 long batchCount = batchWriter.getBatchCount();
-                int expectedMinBatches = (commandCount + AofBatchWriter.MAX_BATCH_SIZE - 1) / AofBatchWriter.MAX_BATCH_SIZE; // 向上取整
+                // 计算理论上的最小批次数（向上取整）
+                int expectedMinBatches = (commandCount + AofBatchWriter.MAX_BATCH_SIZE - 1) / AofBatchWriter.MAX_BATCH_SIZE;
+                // 计算理论上的最大批次数（考虑到延迟可能导致的提前批处理）
+                int expectedMaxBatches = commandCount / (AofBatchWriter.MAX_BATCH_SIZE / 2) + 1;
                 
                 System.out.printf("批处理效率测试: %d 个命令，产生 %d 个批次，底层写入调用 %d 次%n", 
                                  commandCount, batchCount, writeCallCount.get());
                 
-                // 由于异步处理的性质和时序因素，批次数量可能会有较大变化
-                // 我们主要验证批处理确实起作用了（批次数远少于命令数）
-                assertTrue(batchCount >= expectedMinBatches && batchCount <= commandCount / 5, 
-                          "批次数量应该合理，期望 " + expectedMinBatches + "-" + (commandCount / 5) + "，实际 " + batchCount);
-                assertTrue(writeCallCount.get() <= batchCount + 5, 
+                // 验证批次数量在合理范围内
+                assertTrue(batchCount >= expectedMinBatches && batchCount <= expectedMaxBatches, 
+                          String.format("批次数量应该在合理范围内，期望 %d-%d，实际 %d", 
+                              expectedMinBatches, expectedMaxBatches, batchCount));
+                
+                // 验证底层写入调用次数接近批次数量
+                assertTrue(writeCallCount.get() <= batchCount + 2, 
                           "底层写入调用次数应该接近批次数量");
+                
+                // 验证所有命令都被处理
                 assertEquals(commandCount, batchWriter.getTotalBatchedCommands());
             }
         }

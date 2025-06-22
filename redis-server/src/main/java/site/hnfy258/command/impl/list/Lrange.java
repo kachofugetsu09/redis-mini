@@ -62,7 +62,7 @@ public class Lrange implements Command {
             
             if (redisData == null) {
                 // 2. 键不存在，返回空数组
-                return new RespArray(new Resp[0]);
+                return RespArray.EMPTY;
             }
             
             if (!(redisData instanceof RedisList)) {

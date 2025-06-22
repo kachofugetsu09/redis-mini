@@ -59,7 +59,7 @@ public class Zadd implements Command {
                     count++;
                 }
             }
-            return new RespInteger(count);
+            return RespInteger.valueOf(count);
         }catch(Exception e){
             return new Errors("ERR " + e.getMessage());
         }

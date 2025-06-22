@@ -56,7 +56,7 @@ public class Zrange implements Command {
         try{
             // 检查key是否存在
             RedisData data = redisContext.get(key);
-            if(data == null) return new RespArray(new Resp[0]);
+            if(data == null) return RespArray.EMPTY;
 
             // 检查类型
             if(!(data instanceof RedisZset)){
@@ -65,7 +65,7 @@ public class Zrange implements Command {
             
             RedisZset redisZset = (RedisZset) data;
             int size = redisZset.size();
-            if(size == 0) return new RespArray(new Resp[0]);
+            if(size == 0) return RespArray.EMPTY;
 
             // 处理索引
             int startIndex = start;
@@ -75,17 +75,14 @@ public class Zrange implements Command {
             if(stopIndex < 0) stopIndex = size + stopIndex;
 
             startIndex = Math.max(0, startIndex);
-            stopIndex = Math.min(size-1, stopIndex);
-
-            if(startIndex > stopIndex){
-                return new RespArray(new Resp[0]);
+            stopIndex = Math.min(size-1, stopIndex);            if(startIndex > stopIndex){
+                return RespArray.EMPTY;
             }
               // 获取范围数据
             List<RedisZset.ZsetNode> range;
             try {
-                range = redisZset.getRange(startIndex, stopIndex);
-                if(range == null) {
-                    return new RespArray(new Resp[0]);
+                range = redisZset.getRange(startIndex, stopIndex);                if(range == null) {
+                    return RespArray.EMPTY;
                 }
                 
                 // 不需要再反转列表，因为已经在ConcurrentSkipListMap中正确排序

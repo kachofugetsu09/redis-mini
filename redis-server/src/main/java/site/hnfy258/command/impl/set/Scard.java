@@ -30,24 +30,22 @@ public class Scard implements Command {
         if (array.length >= 2) {
             this.key = RedisBytes.fromString(((BulkString) array[1]).toString());
         }
-    }
-
-    @Override
+    }    @Override
     public Resp handle() {
         if (key == null) {
-            return new RespInteger(0);
+            return RespInteger.ZERO;
         }
 
         RedisData data = context.get(key);
         if (data == null) {
-            return new RespInteger(0);
+            return RespInteger.ZERO;
         }
 
         if (!(data instanceof RedisSet)) {
             throw new IllegalArgumentException("Key is not a set");
         }
 
-        return new RespInteger(((RedisSet) data).size());
+        return RespInteger.valueOf(((RedisSet) data).size());
     }
 
     @Override

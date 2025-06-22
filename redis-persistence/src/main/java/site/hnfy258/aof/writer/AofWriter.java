@@ -404,7 +404,7 @@ public class AofWriter implements Writer {
             }
         }
     }
-      /**
+    /**
      * 安全关闭文件资源
      */
     private void closeFileResources(final FileChannel fileChannel, 

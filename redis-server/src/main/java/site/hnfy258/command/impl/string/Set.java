@@ -40,13 +40,13 @@ public class Set implements Command {
             if(data instanceof RedisString){
                 RedisString redisString = (RedisString) data;
                 redisString.setSds(Sds.create(value.getBytesUnsafe()));
-                return new SimpleString("OK");
+                return SimpleString.OK;
             }
         }
         redisContext.put(key, new RedisString(Sds.create(value.getBytesUnsafe())));
 //        log.info("set key:{} value:{}", key, value);
 
-        return new SimpleString("OK");
+        return SimpleString.OK;
     }
 
     @Override
