@@ -1,11 +1,9 @@
 package site.hnfy258.server;
 
 import io.netty.bootstrap.ServerBootstrap;
-import io.netty.channel.Channel;
-import io.netty.channel.ChannelHandlerContext;
-import io.netty.channel.ChannelInitializer;
-import io.netty.channel.ChannelPipeline;
-import io.netty.channel.EventLoopGroup;
+import io.netty.channel.*;
+import io.netty.channel.epoll.EpollServerSocketChannel;
+import io.netty.channel.kqueue.KQueueServerSocketChannel;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
@@ -30,7 +28,6 @@ import site.hnfy258.rdb.RdbManager;
 import site.hnfy258.server.handler.RespCommandHandler;
 import site.hnfy258.server.handler.RespDecoder;
 import site.hnfy258.server.handler.RespEncoder;
-import io.netty.channel.ChannelOption;
 import site.hnfy258.server.context.RedisContext;
 import site.hnfy258.server.context.RedisContextImpl;
 import site.hnfy258.server.config.RedisServerConfig;
@@ -47,6 +44,8 @@ public class RedisMiniServer implements RedisServer, ReplicationHost {
     
     /** Redis服务器配置 */
     private final RedisServerConfig config;
+
+    private Class<? extends ServerChannel> serverChannelClass;
 
     private String host;
     private int port;    
@@ -144,13 +143,13 @@ public class RedisMiniServer implements RedisServer, ReplicationHost {
     public void start() {
         ServerBootstrap serverBootstrap = new ServerBootstrap();
         serverBootstrap.group(bossGroup, workerGroup)
-                .channel(NioServerSocketChannel.class)
+                .channel(serverChannelClass) // 使用动态选择的通道类型
                 .option(ChannelOption.SO_BACKLOG, 1024)
                 .childOption(ChannelOption.SO_KEEPALIVE, true)
                 .childOption(ChannelOption.TCP_NODELAY, true)
                 .childOption(ChannelOption.SO_RCVBUF, 32 * 1024)
                 .childOption(ChannelOption.SO_SNDBUF, 32 * 1024)
-                .childHandler(new ChannelInitializer<SocketChannel>() {                    
+                .childHandler(new ChannelInitializer<SocketChannel>() {
                     @Override
                     protected void initChannel(SocketChannel ch) throws Exception {
                         ChannelPipeline pipeline = ch.pipeline();
@@ -235,30 +234,30 @@ public class RedisMiniServer implements RedisServer, ReplicationHost {
     private void initializeEventLoopGroups() {
         final int cpuCount = Runtime.getRuntime().availableProcessors();
         final String osName = System.getProperty("os.name").toLowerCase();
-        
-        // 1. 优先使用Linux的Epoll，性能最佳
+
         if (Epoll.isAvailable()) {
             log.info("使用Epoll EventLoopGroup (操作系统: {})", osName);
-            this.bossGroup = new EpollEventLoopGroup(1, 
-                new DefaultThreadFactory("epoll-boss"));
-            this.workerGroup = new EpollEventLoopGroup(cpuCount * 2, 
-                new DefaultThreadFactory("epoll-worker"));
+            this.bossGroup = new EpollEventLoopGroup(1,
+                    new DefaultThreadFactory("epoll-boss"));
+            this.workerGroup = new EpollEventLoopGroup(cpuCount * 2,
+                    new DefaultThreadFactory("epoll-worker"));
+            this.serverChannelClass = EpollServerSocketChannel.class; // 设置为 EpollServerSocketChannel
         }
-        // 2. 其次使用macOS的KQueue
         else if (KQueue.isAvailable()) {
             log.info("使用KQueue EventLoopGroup (操作系统: {})", osName);
-            this.bossGroup = new KQueueEventLoopGroup(1, 
-                new DefaultThreadFactory("kqueue-boss"));
-            this.workerGroup = new KQueueEventLoopGroup(cpuCount * 2, 
-                new DefaultThreadFactory("kqueue-worker"));
+            this.bossGroup = new KQueueEventLoopGroup(1,
+                    new DefaultThreadFactory("kqueue-boss"));
+            this.workerGroup = new KQueueEventLoopGroup(cpuCount * 2,
+                    new DefaultThreadFactory("kqueue-worker"));
+            this.serverChannelClass = KQueueServerSocketChannel.class; // 设置为 KQueueServerSocketChannel
         }
-        // 3. 最后使用跨平台的NIO (Windows等)
         else {
             log.info("使用NIO EventLoopGroup (操作系统: {})", osName);
-            this.bossGroup = new NioEventLoopGroup(1, 
-                new DefaultThreadFactory("nio-boss"));
-            this.workerGroup = new NioEventLoopGroup(cpuCount * 2, 
-                new DefaultThreadFactory("nio-worker"));
+            this.bossGroup = new NioEventLoopGroup(1,
+                    new DefaultThreadFactory("nio-boss"));
+            this.workerGroup = new NioEventLoopGroup(cpuCount * 2,
+                    new DefaultThreadFactory("nio-worker"));
+            this.serverChannelClass = NioServerSocketChannel.class; // 设置为 NioServerSocketChannel
         }
     }
 
