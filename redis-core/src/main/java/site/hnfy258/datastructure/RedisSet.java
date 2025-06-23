@@ -112,10 +112,9 @@ public class RedisSet implements RedisData {
     public int add(List<RedisBytes> members) {
         int count = 0;
         for (RedisBytes member : members) {
-            // 使用put的返回值判断是否为新元素
-            // 返回null表示key不存在，是新插入的元素
-            Object oldValue = setCore.put(member, PRESENT);
-            if (oldValue == null) {
+            // 先检查是否存在，再决定是否添加
+            if (!setCore.containsKey(member)) {
+                setCore.put(member, PRESENT);
                 count++;
             }
         }

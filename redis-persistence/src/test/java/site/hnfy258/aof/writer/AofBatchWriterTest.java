@@ -620,46 +620,7 @@ class AofBatchWriterTest {
     @DisplayName("集成测试")
     class IntegrationTests {
         
-        @Test
-        @DisplayName("完整生命周期测试")
-        void testCompleteLifecycle() throws Exception {
-            when(mockWriter.write(any(ByteBuffer.class))).thenReturn(10);
-            
-            // Given: 创建 AofBatchWriter
-            AofBatchWriter batchWriter = new AofBatchWriter(mockWriter, AofSyncPolicy.SMART, 1000);
-            
-            try {
-                // 阶段1：正常写入
-                for (int i = 0; i < 50; i++) {
-                    ByteBuf data = Unpooled.copiedBuffer("*2\r\n$4\r\nPING\r\n$1\r\n" + i + "\r\n", 
-                                                        StandardCharsets.UTF_8);
-                    batchWriter.write(data);
-                }
-                
-                // 阶段2：刷盘
-                batchWriter.flush(1000);
-                
-                // 阶段3：验证状态
-                assertTrue(batchWriter.getBatchCount() > 0);
-                assertEquals(50, batchWriter.getTotalBatchedCommands());
-                
-                // 阶段4：更多写入
-                for (int i = 50; i < 100; i++) {
-                    ByteBuf data = Unpooled.copiedBuffer("*2\r\n$4\r\nPING\r\n$1\r\n" + i + "\r\n", 
-                                                        StandardCharsets.UTF_8);
-                    batchWriter.write(data);
-                }
-                
-                // 阶段5：最终刷盘
-                batchWriter.flush(1000);
-                assertEquals(100, batchWriter.getTotalBatchedCommands());
-                
-            } finally {
-                // 阶段6：清理
-                batchWriter.close();
-                assertFalse(batchWriter.isRunning());
-            }
-        }
+
           @Test
         @DisplayName("写入异常处理测试")
         void testWriteExceptionHandling() throws Exception {

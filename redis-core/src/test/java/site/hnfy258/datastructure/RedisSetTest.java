@@ -42,8 +42,6 @@ class RedisSetTest {
     /** 测试用的常量 */
     private static final String TEST_KEY = "test_set";
     private static final int LARGE_SIZE = 1000;
-    private static final int THREAD_COUNT = 10;
-    private static final int OPERATIONS_PER_THREAD = 100;
 
     /** 被测试的RedisSet实例 */
     private RedisSet redisSet;
