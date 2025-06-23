@@ -30,18 +30,34 @@ public class CommandExecutorImpl implements CommandExecutor {
     @Override
     public boolean executeCommand(String commandName, String[] args) {
         try {           
+            // 1. 参数验证
+            if (commandName == null) {
+                log.warn("命令名称为null");
+                return false;
+            }
+
+            if (args == null) {
+                log.warn("命令参数为null: {}", commandName);
+                return false;
+            }
 
             final CommandType commandType = CommandType.findByName(commandName);
             if (commandType == null) {
                 log.warn("未知命令类型: {}", commandName);
                 return false;
             }
+
+            // 如果参数为空，直接返回空数组
+            if (args.length == 0) {
+                log.warn("命令参数为空: {}", commandName);
+                return false;
+            }
             // 2. 构建RESP格式的参数，使用RedisBytes优化性能
             Resp[] respArgs = new Resp[args.length + 1];
-              // 命令名优先从缓存池获取，使用零拷贝优化
+            // 命令名优先从缓存池获取，使用零拷贝优化
             final RedisBytes commandBytes = RedisBytes.fromString(commandName);
             respArgs[0] = BulkString.wrapTrusted(commandBytes.getBytesUnsafe());
-            
+
             // 参数使用RedisBytes减少重复编码，使用零拷贝优化
             for (int i = 0; i < args.length; i++) {
                 final RedisBytes argBytes = RedisBytes.fromString(args[i]);
@@ -56,7 +72,8 @@ public class CommandExecutorImpl implements CommandExecutor {
             
             return true;
         } catch (Exception e) {
-            log.error("命令执行失败: {} {}", commandName, String.join(" ", args), e);
+            String argsStr = args != null ? String.join(" ", args) : "null";
+            log.error("命令执行失败: {} {}", commandName, argsStr, e);
             return false;
         }
     }

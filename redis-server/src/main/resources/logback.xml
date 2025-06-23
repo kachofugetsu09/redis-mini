@@ -39,6 +39,19 @@
         <appender-ref ref="ASYNC_FILE"/>
     </logger>
 
+    <!-- 写命令和数据操作日志 -->
+    <logger name="site.hnfy258.server.handler.RespCommandHandler" level="TRACE" additivity="false">
+        <appender-ref ref="ASYNC_FILE"/>
+    </logger>
+
+    <!-- 持久化数据加载日志 -->
+    <logger name="site.hnfy258.rdb.RdbUtils" level="DEBUG" additivity="false">
+        <appender-ref ref="ASYNC_FILE"/>
+    </logger>
+    <logger name="site.hnfy258.aof.utils.AofUtils" level="DEBUG" additivity="false">
+        <appender-ref ref="ASYNC_FILE"/>
+    </logger>
+
     <!-- Netty 框架日志级别 -->
     <logger name="io.netty" level="WARN" additivity="false">
         <appender-ref ref="CONSOLE"/>

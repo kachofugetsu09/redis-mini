@@ -10,6 +10,7 @@ import site.hnfy258.datastructure.RedisBytes;
 import site.hnfy258.datastructure.RedisData;
 import site.hnfy258.rdb.RdbManager;
 import site.hnfy258.server.command.executor.CommandExecutorImpl;
+import site.hnfy258.server.config.RedisServerConfig;
 
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -34,50 +35,83 @@ public class RedisContextImpl implements RedisContext {
     
     // ========== 原有组件（用于兼容性） ==========
     private final RedisCore redisCore;
-    private final AofManager aofManager;
-    private final RdbManager rdbManager;
+    private AofManager aofManager;
+    private RdbManager rdbManager;
     
     // ========== 服务器配置 ==========
     private final String serverHost;
     private final int serverPort;
+    private final RedisServerConfig config;
     
     // ========== 系统状态 ==========
     private final AtomicBoolean running = new AtomicBoolean(false);
     
     /**
-     * 构造函数
+     * 新的构造函数，接收RedisServerConfig
      * 
      * @param redisCore Redis核心数据操作组件
-     * @param aofManager AOF持久化管理器，可以为null
-     * @param rdbManager RDB持久化管理器，可以为null
      * @param serverHost 服务器主机地址
      * @param serverPort 服务器端口号
-     */    public RedisContextImpl(final RedisCore redisCore, 
-                           final AofManager aofManager, 
-                           final RdbManager rdbManager,
-                           final String serverHost,
-                           final int serverPort) {
-        // 1. 保存组件引用
+     * @param config Redis服务器配置
+     */
+    public RedisContextImpl(final RedisCore redisCore,
+                          final String serverHost,
+                          final int serverPort,
+                          final RedisServerConfig config) {
         this.redisCore = redisCore;
-        this.aofManager = aofManager;
-        this.rdbManager = rdbManager;
         this.serverHost = serverHost;
         this.serverPort = serverPort;
+        this.config = config;
         
-        // 2. 初始化分层组件
+        // 1. 初始化分层组件
         this.dataStore = new RedisDataStore(redisCore);
-        this.persistence = new RedisPersistence(aofManager, rdbManager);
         
-        // 3. 设置命令执行器（解决AOF加载时的命令执行问题）
+        // 2. 设置命令执行器（移到前面）
         if (redisCore instanceof RedisCoreImpl) {
             CommandExecutorImpl commandExecutor = new CommandExecutorImpl(this);
             ((RedisCoreImpl) redisCore).setCommandExecutor(commandExecutor);
         }
         
+        // 3. 初始化持久化组件
+        initializePersistence();
+        
+        // 4. 初始化持久化管理层
+        this.persistence = new RedisPersistence(aofManager, rdbManager);
+        
         log.info("RedisContext初始化完成 - AOF:{}, RDB:{}, 服务器:{}:{}", 
                 aofManager != null ? "启用" : "禁用",
                 rdbManager != null ? "启用" : "禁用",
                 serverHost, serverPort);
+    }
+    
+    /**
+     * 初始化持久化组件
+     */
+    private void initializePersistence() {
+        try {
+            // 初始化AOF
+            if (config.isAofEnabled()) {
+                this.aofManager = new AofManager(config.getAofFileName(), redisCore);
+                aofManager.load();
+                Thread.sleep(500);
+                log.info("AOF持久化组件初始化成功: {}", config.getAofFileName());
+            }
+            
+            // 初始化RDB
+            if (config.isRdbEnabled()) {
+                this.rdbManager = new RdbManager(redisCore, config.getRdbFileName());
+                boolean success = rdbManager.loadRdb();
+                if (!success) {
+                    log.warn("RDB文件加载失败，可能是文件不存在或格式错误: {}", config.getRdbFileName());
+                } else {
+                    log.info("RDB持久化组件初始化成功: {}", config.getRdbFileName());
+                }
+                Thread.sleep(500);
+            }
+        } catch (Exception e) {
+            log.error("持久化组件初始化失败", e);
+            throw new RuntimeException("持久化组件初始化失败", e);
+        }
     }
     
     /**

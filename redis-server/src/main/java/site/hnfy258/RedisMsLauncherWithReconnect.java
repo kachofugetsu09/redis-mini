@@ -4,6 +4,7 @@ import lombok.extern.slf4j.Slf4j;
 import site.hnfy258.cluster.node.RedisNode;  
 import site.hnfy258.server.RedisMiniServer;  
 import site.hnfy258.server.RedisServer;  
+import site.hnfy258.server.config.RedisServerConfig;
   
 import java.util.concurrent.Executors;  
 import java.util.concurrent.ScheduledExecutorService;  
@@ -41,22 +42,61 @@ Executors.newScheduledThreadPool(2);
         log.info("将在{}秒后模拟slave-node1断线", DISCONNECT_DELAY_SECONDS);  
     }  
     /**  
-     * 启动主节点     */    private static void startMasterNode() throws Exception {  
-        masterServer = new RedisMiniServer("localhost", 6379);  
+     * 启动主节点     */
+
+    private static void startMasterNode() throws Exception {
+        RedisServerConfig masterConfig = RedisServerConfig.builder()
+                .host("localhost")
+                .port(6379)
+                .rdbEnabled(true)
+                .rdbFileName("master.rdb")
+                .replicationEnabled(true)
+                .replicationBufferSize(1024 * 1024) // 1MB复制缓冲区
+                .backlogSize(1024)
+                .workerThreadCount(4)
+                .commandExecutorThreadCount(1) // 保持单线程命令执行
+                .build();
+                
+        masterServer = new RedisMiniServer(masterConfig);  
         masterNode = new RedisNode(masterServer, "localhost", 6379, true, "master-node");  
         masterServer.setRedisNode(masterNode);  
         masterServer.start();  
         log.info("主节点启动完成: {}:{}", masterNode.getHost(), masterNode.getPort());  
     }  
     /**  
-     * 启动从节点     */    private static void startSlaveNodes() throws Exception {  
+     * 启动从节点     */    
+    private static void startSlaveNodes() throws Exception {  
         // 启动从节点1  
-        slaveServer1 = new RedisMiniServer("localhost", 6380, "slave1.rdb");  
+        RedisServerConfig slave1Config = RedisServerConfig.builder()
+                .host("localhost")
+                .port(6380)
+                .rdbEnabled(true)
+                .rdbFileName("slave1.rdb")
+                .replicationEnabled(true)
+                .replicationBufferSize(1024 * 1024) // 1MB复制缓冲区
+                .backlogSize(1024)
+                .workerThreadCount(4)
+                .commandExecutorThreadCount(1) // 保持单线程命令执行
+                .build();
+                
+        slaveServer1 = new RedisMiniServer(slave1Config);  
         slaveNode1 = new RedisNode(slaveServer1, "localhost", 6380, false, "slave-node1");  
         slaveServer1.setRedisNode(slaveNode1);  
         slaveServer1.start();  
         // 启动从节点2  
-        slaveServer2 = new RedisMiniServer("localhost", 6381, "slave2.rdb");  
+        RedisServerConfig slave2Config = RedisServerConfig.builder()
+                .host("localhost")
+                .port(6381)
+                .rdbEnabled(true)
+                .rdbFileName("slave2.rdb")
+                .replicationEnabled(true)
+                .replicationBufferSize(1024 * 1024) // 1MB复制缓冲区
+                .backlogSize(1024)
+                .workerThreadCount(4)
+                .commandExecutorThreadCount(1) // 保持单线程命令执行
+                .build();
+                
+        slaveServer2 = new RedisMiniServer(slave2Config);  
         slaveNode2 = new RedisNode(slaveServer2, "localhost", 6381, false, "slave-node2");  
         slaveServer2.setRedisNode(slaveNode2);  
         slaveServer2.start();  

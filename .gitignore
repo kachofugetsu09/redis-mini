@@ -40,3 +40,4 @@ build/
 /logs/miniRedis.log
 /dump.rdb
 /logs/
+/.idea/

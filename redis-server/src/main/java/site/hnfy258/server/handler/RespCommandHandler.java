@@ -17,64 +17,130 @@ import site.hnfy258.protocal.Resp;
 import site.hnfy258.protocal.RespArray;
 import site.hnfy258.server.context.RedisContext;
 
+/**
+ * Redis命令处理器，负责解析和执行客户端请求。
+ * 
+ * <p>该类的主要职责：
+ * <ul>
+ *   <li>解析RESP协议命令
+ *   <li>执行Redis命令
+ *   <li>处理命令响应
+ *   <li>管理持久化和复制
+ * </ul>
+ * 
+ * <p>性能优化：
+ * <ul>
+ *   <li>使用静态错误响应避免重复创建
+ *   <li>实现零拷贝响应写入
+ *   <li>优化ByteBuf的分配和释放
+ *   <li>高效的命令查找机制
+ * </ul>
+ * 
+ * <p>可靠性保证：
+ * <ul>
+ *   <li>完整的异常处理
+ *   <li>资源的合理释放
+ *   <li>连接状态的监控
+ * </ul>
+ *
+ * @author hnfy258
+ * @since 1.0
+ */
 @Slf4j
 @Getter
 public class RespCommandHandler extends SimpleChannelInboundHandler<Resp> {
     
-    // ========== 静态错误响应：避免重复创建 ==========
+    /** 不支持的命令错误响应 */
     private static final Errors UNSUPPORTED_COMMAND_ERROR = new Errors("不支持的命令");
+    
+    /** 空命令错误响应 */
     private static final Errors EMPTY_COMMAND_ERROR = new Errors("命令不能为空");
+    
+    /** 命令不存在错误响应 */
     private static final Errors COMMAND_NOT_FOUND_ERROR = new Errors("命令不存在");
+    
+    /** 命令执行失败错误响应 */
     private static final Errors COMMAND_EXECUTION_ERROR = new Errors("命令执行失败");
     
-    // ========== 核心组件：统一使用RedisContext ==========
+    /** Redis服务器上下文 */
     private final RedisContext redisContext;
-      // ========== 系统状态 ==========
+    
+    /** 当前节点是否为主节点 */
     private final boolean isMaster;
 
     /**
-     * 构造函数：基于RedisContext的解耦架构
+     * 创建命令处理器实例。
      * 
-     * @param redisContext Redis统一上下文，提供所有核心功能的访问接口
+     * <p>初始化过程：
+     * <ul>
+     *   <li>设置Redis上下文
+     *   <li>确定节点角色
+     *   <li>记录初始化信息
+     * </ul>
+     * 
+     * @param redisContext Redis服务器上下文
+     * @throws IllegalArgumentException 如果redisContext为null
      */
     public RespCommandHandler(final RedisContext redisContext) {
+        if (redisContext == null) {
+            throw new IllegalArgumentException("Redis上下文不能为null");
+        }
         this.redisContext = redisContext;
         this.isMaster = redisContext.isMaster();
         
         log.info("RespCommandHandler初始化完成 - 模式: {}", 
                 isMaster ? "主节点" : "从节点");
     }
-      @Override
+
+    /**
+     * 处理客户端请求。
+     * 
+     * <p>处理流程：
+     * <ul>
+     *   <li>验证命令格式
+     *   <li>执行命令
+     *   <li>返回响应
+     * </ul>
+     * 
+     * @param ctx 通道上下文
+     * @param msg RESP格式的命令
+     * @throws Exception 如果处理过程中发生错误
+     */
+    @Override
     protected void channelRead0(ChannelHandlerContext ctx, Resp msg) throws Exception {
         if (msg instanceof RespArray) {
             RespArray respArray = (RespArray) msg;
             Resp response = processCommand(respArray, ctx);
 
             if (response != null) {
-                //  零拷贝优化：直接写入到 Channel，避免中间缓冲
                 writeResponseDirectly(ctx, response);
             }
         } else {
-            //  复用静态错误响应实例
             writeResponseDirectly(ctx, UNSUPPORTED_COMMAND_ERROR);
         }
     }
 
     /**
-     * 🚀 零拷贝响应写入：直接写入 Channel 避免额外的 ByteBuf 分配
+     * 使用零拷贝技术写入响应。
      * 
-     * @param ctx Channel 上下文
+     * <p>优化特点：
+     * <ul>
+     *   <li>直接写入Channel
+     *   <li>避免中间缓冲
+     *   <li>减少内存分配
+     *   <li>提高响应速度
+     * </ul>
+     * 
+     * @param ctx 通道上下文
      * @param response 要发送的响应
      */
     private void writeResponseDirectly(final ChannelHandlerContext ctx, final Resp response) {
         try {
-            // 1. 检查 Channel 是否活跃和可写
             if (!ctx.channel().isActive() || !ctx.channel().isWritable()) {
                 log.debug("Channel 不可写，跳过响应发送");
                 return;
             }
 
-            // 2.  直接写入响应，让 Netty 的编码器处理零拷贝优化
             ctx.writeAndFlush(response);
             
         } catch (Exception e) {
@@ -84,7 +150,9 @@ public class RespCommandHandler extends SimpleChannelInboundHandler<Resp> {
     }
 
     /**
-     * 确保数据被及时刷新到客户端
+     * 确保数据被及时刷新到客户端。
+     * 
+     * @param ctx 通道上下文
      */
     @Override
     public void channelReadComplete(ChannelHandlerContext ctx) throws Exception {
@@ -93,7 +161,10 @@ public class RespCommandHandler extends SimpleChannelInboundHandler<Resp> {
     }
 
     /**
-     * 处理连接异常
+     * 处理连接异常。
+     * 
+     * @param ctx 通道上下文
+     * @param cause 异常原因
      */
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) throws Exception {
@@ -102,21 +173,44 @@ public class RespCommandHandler extends SimpleChannelInboundHandler<Resp> {
     }
 
     /**
-     * 执行命令的公共接口
+     * 提供命令执行的公共接口。
+     * 
+     * <p>主要用于：
+     * <ul>
+     *   <li>内部命令执行
+     *   <li>复制命令处理
+     *   <li>脚本执行
+     * </ul>
      * 
      * @param command 要执行的命令
      * @return 命令执行结果
      */
     public Resp executeCommand(final RespArray command) {
         return processCommand(command, null);
-    }    private Resp processCommand(RespArray respArray, ChannelHandlerContext ctx) {
+    }
+
+    /**
+     * 处理Redis命令。
+     * 
+     * <p>处理流程：
+     * <ul>
+     *   <li>解析命令类型
+     *   <li>创建命令实例
+     *   <li>执行命令
+     *   <li>处理写命令的持久化和复制
+     * </ul>
+     * 
+     * @param respArray 命令数组
+     * @param ctx 通道上下文（可选）
+     * @return 命令执行结果
+     */
+    private Resp processCommand(RespArray respArray, ChannelHandlerContext ctx) {
         if (respArray.getContent().length == 0) {
             return EMPTY_COMMAND_ERROR;
         }
 
         try {
             Resp[] array = respArray.getContent();
-            //  高性能命令查找：直接使用哈希表，O(1) 时间复杂度
             final RedisBytes cmd = ((BulkString) array[0]).getContent();
             final CommandType commandType = CommandType.findByBytes(cmd);
             
@@ -124,11 +218,10 @@ public class RespCommandHandler extends SimpleChannelInboundHandler<Resp> {
                 return COMMAND_NOT_FOUND_ERROR;
             }
             
-            // 1. 使用RedisContext创建命令（解耦架构）
             final Command command = commandType.createCommand(redisContext);
             command.setContext(array);
 
-            // 2. 特殊处理PSYNC命令
+            // 特殊处理PSYNC命令
             if (command instanceof Psync) {
                 ((Psync) command).setChannelHandlerContext(ctx);
                 final RedisNode masterNode = redisContext.getRedisNode();
@@ -138,10 +231,8 @@ public class RespCommandHandler extends SimpleChannelInboundHandler<Resp> {
                 log.info("执行PSYNC命令，来自：{}", ctx.channel().remoteAddress());
             }
 
-            // 3. 执行命令
             final Resp result = command.handle();
 
-            // 4. 写命令处理：AOF持久化 + 主从复制传播
             if (command.isWriteCommand()) {
                 handleWriteCommand(respArray, commandType);
             }
@@ -154,8 +245,22 @@ public class RespCommandHandler extends SimpleChannelInboundHandler<Resp> {
     }
 
     /**
-     * 处理写命令的持久化和复制
-     * 专注于网络层零拷贝优化，持久化层保持原有的简单设计
+     * 处理写命令的持久化和复制。
+     * 
+     * <p>处理流程：
+     * <ul>
+     *   <li>检查是否需要AOF持久化
+     *   <li>检查是否需要主从复制
+     *   <li>执行持久化操作
+     *   <li>传播命令到从节点
+     * </ul>
+     * 
+     * <p>优化策略：
+     * <ul>
+     *   <li>使用池化的ByteBuf
+     *   <li>确保资源正确释放
+     *   <li>异常的优雅处理
+     * </ul>
      * 
      * @param respArray 命令数组
      * @param commandType 命令类型
@@ -165,12 +270,11 @@ public class RespCommandHandler extends SimpleChannelInboundHandler<Resp> {
         final boolean needReplication = redisContext.isMaster();
         
         if (!needAof && !needReplication) {
-            return; // 无需持久化和复制
+            return;
         }
 
         if (needAof) {
             try {
-                // 使用现有的字节数组接口进行 AOF 持久化
                 final ByteBuf tempBuf = PooledByteBufAllocator.DEFAULT.buffer();
                 try {
                     respArray.encode(respArray, tempBuf);
@@ -204,6 +308,11 @@ public class RespCommandHandler extends SimpleChannelInboundHandler<Resp> {
         }
     }
 
+    /**
+     * 处理通道关闭事件。
+     * 
+     * @param ctx 通道上下文
+     */
     @Override
     public void channelInactive(ChannelHandlerContext ctx) {
         ctx.fireChannelInactive();

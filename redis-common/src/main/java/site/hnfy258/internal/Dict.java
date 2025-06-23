@@ -243,7 +243,7 @@ public class Dict<K,V> {
     }
 
     /** 当前字典的状态。 */
-    private  DictState<K, V> state;
+    private volatile DictState<K, V> state;
 
     /** 版本号生成器，用于追踪状态变更 */
     private AtomicLong versionGenerator = new AtomicLong(0);

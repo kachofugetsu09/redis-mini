@@ -115,7 +115,9 @@ class RedisDBTest {
         assertTrue(redisDB.keys().isEmpty());
         assertFalse(redisDB.exist(testKey));
         assertFalse(redisDB.exist(key2));
-    }    @Test
+    }
+
+    @Test
     @DisplayName("测试读写分离并发安全性")
     void testConcurrentReadWhileWrite() throws InterruptedException {
         final int INITIAL_DATA_SIZE = 100;
@@ -214,7 +216,9 @@ class RedisDBTest {
         
         executor.shutdown();
         assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS), "线程池应该在5秒内关闭");
-    }@Test
+    }
+
+    @Test
     @DisplayName("测试边界条件")
     void testBoundaryConditions() {
         // 1. 测试null键 - Dict实现抛出IllegalArgumentException
@@ -271,6 +275,4 @@ class RedisDBTest {
 
         assertEquals(LARGE_DATA_SIZE / 2, redisDB.size());
     }
-    
-
 }
