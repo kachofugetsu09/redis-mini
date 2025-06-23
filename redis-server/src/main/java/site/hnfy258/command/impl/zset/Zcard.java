@@ -45,7 +45,7 @@ public class Zcard implements Command {
             throw new IllegalArgumentException("Key is not a sorted set");
         }
 
-        return RespInteger.valueOf(((RedisZset) data).size());
+        return RespInteger.valueOf((int) ((RedisZset) data).size());
     }
 
     @Override

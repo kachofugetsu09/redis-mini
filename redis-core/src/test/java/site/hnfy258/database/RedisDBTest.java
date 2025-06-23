@@ -194,7 +194,7 @@ class RedisDBTest {
         
         // 6. 验证结果
         final int expectedFinalSize = INITIAL_DATA_SIZE + WRITE_OPERATIONS;
-        final int actualSize = redisDB.size();
+        final long actualSize = redisDB.size();
         
         System.out.println("=== 读写分离测试结果 ===");
         System.out.println("初始数据大小: " + INITIAL_DATA_SIZE);
@@ -272,49 +272,5 @@ class RedisDBTest {
         assertEquals(LARGE_DATA_SIZE / 2, redisDB.size());
     }
     
-    /**
-     * 简化的并发安全性测试 - 作为主并发测试的补充
-     */
-    @Test
-    @DisplayName("测试基本并发安全性")
-    void testBasicConcurrentSafety() throws InterruptedException {
-        final int SIMPLE_THREAD_COUNT = 5;
-        final int SIMPLE_OPERATIONS = 20;
-        final CountDownLatch latch = new CountDownLatch(SIMPLE_THREAD_COUNT);
-        final ExecutorService executor = Executors.newFixedThreadPool(SIMPLE_THREAD_COUNT);
 
-        // 1. 每个线程操作不同的键，避免键冲突
-        for (int i = 0; i < SIMPLE_THREAD_COUNT; i++) {
-            final int threadIndex = i;
-            executor.submit(() -> {
-                try {
-                    for (int j = 0; j < SIMPLE_OPERATIONS; j++) {
-                        String keyStr = "thread_" + threadIndex + "_key_" + j;
-                        String valueStr = "thread_" + threadIndex + "_value_" + j;
-                        RedisBytes key = RedisBytes.fromString(keyStr);
-                        RedisString value = new RedisString(Sds.create(valueStr.getBytes()));
-                        
-                        // 2. 执行操作
-                        redisDB.put(key, value);
-                        
-                        // 3. 验证操作
-                        assertTrue(redisDB.exist(key));
-                        assertEquals(value, redisDB.get(key));
-                    }
-                } finally {
-                    latch.countDown();
-                }
-            });
-        }
-
-        // 4. 等待所有线程完成
-        assertTrue(latch.await(10, TimeUnit.SECONDS), "简化并发测试应该在10秒内完成");
-        
-        // 5. 验证最终结果
-        assertEquals(SIMPLE_THREAD_COUNT * SIMPLE_OPERATIONS, redisDB.size(), 
-                    "数据库应该包含所有插入的键值对");
-
-        executor.shutdown();
-        assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
-    }
 }

@@ -100,7 +100,7 @@ public class RedisDB {
      * 
      * @return 键值对数量
      */
-    public int size() {
+    public long size() {
         return data.size();
     }
 

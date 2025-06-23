@@ -45,7 +45,7 @@ public class Scard implements Command {
             throw new IllegalArgumentException("Key is not a set");
         }
 
-        return RespInteger.valueOf(((RedisSet) data).size());
+        return RespInteger.valueOf((int) ((RedisSet) data).size());
     }
 
     @Override

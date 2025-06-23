@@ -64,7 +64,7 @@ public class Zrange implements Command {
             }
             
             RedisZset redisZset = (RedisZset) data;
-            int size = redisZset.size();
+            int size = Math.toIntExact(redisZset.size());
             if(size == 0) return RespArray.EMPTY;
 
             // 处理索引
@@ -75,13 +75,15 @@ public class Zrange implements Command {
             if(stopIndex < 0) stopIndex = size + stopIndex;
 
             startIndex = Math.max(0, startIndex);
-            stopIndex = Math.min(size-1, stopIndex);            if(startIndex > stopIndex){
+            stopIndex = Math.min(size-1, stopIndex);
+            if(startIndex > stopIndex){
                 return RespArray.EMPTY;
             }
               // 获取范围数据
             List<RedisZset.ZsetNode> range;
             try {
-                range = redisZset.getRange(startIndex, stopIndex);                if(range == null) {
+                range = redisZset.getRange(startIndex, stopIndex);
+                if(range == null) {
                     return RespArray.EMPTY;
                 }
                 

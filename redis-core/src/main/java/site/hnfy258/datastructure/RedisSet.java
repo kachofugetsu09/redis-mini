@@ -185,9 +185,11 @@ public class RedisSet implements RedisData {
      * 
      * @return 集合中成员的数量
      */
-    public int size() {
+    public long size() {
         return setCore.size();
-    }    /**
+    }
+
+    /**
      * 获取集合中的所有成员
      * 
      * <p>使用动态数组来避免并发读写时的TOCTOU问题。

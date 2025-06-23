@@ -288,7 +288,7 @@ public class RdbUtils {
     public static void saveHash(DataOutputStream dos, RedisBytes key, RedisHash value) throws IOException {        dos.writeByte(RdbConstants.HASH_TYPE);
         writeString(dos, key.getBytes());
         Dict<RedisBytes, RedisBytes> hash = value.getHash();
-        writeLength(dos, hash.size());
+        writeLength(dos, (int) hash.size());
 
         // 使用线程安全的快照避免并发问题
         Map<RedisBytes, RedisBytes> snapshot = hash.createSafeSnapshot();
@@ -330,7 +330,7 @@ public class RdbUtils {
      */
     public static void saveSet(DataOutputStream dos, RedisBytes key, RedisSet value) throws IOException {        dos.writeByte(RdbConstants.SET_TYPE);
         writeString(dos, key.getBytes());
-        writeLength(dos, value.size());
+        writeLength(dos, (int) value.size());
         for (RedisBytes bytes : value.getAll()) {
             writeString(dos, bytes.getBytesUnsafe());
         }
@@ -368,7 +368,7 @@ public class RdbUtils {
      */
     public static void saveZset(DataOutputStream dos, RedisBytes key, RedisZset value) throws IOException {        dos.writeByte(RdbConstants.ZSET_TYPE);
         writeString(dos, key.getBytes());
-        int size = value.size();
+        int size = Math.toIntExact(value.size());
         writeLength(dos, size);
 
         Iterable<? extends Map.Entry<String, Double>> entries = value.getAll();

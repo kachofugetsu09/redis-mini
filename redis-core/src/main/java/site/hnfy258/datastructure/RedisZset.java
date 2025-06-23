@@ -209,7 +209,7 @@ public class RedisZset implements RedisData {
      * 
      * @return 元素数量
      */
-    public int size() {
+    public long size() {
         return memberDict.size();
     }
     

@@ -135,7 +135,7 @@ class RdbWriterTest {
 
             // 设置Mock数据库
             when(mockRedisDB.getId()).thenReturn(0);
-            when(mockRedisDB.size()).thenReturn(1);
+            when(mockRedisDB.size()).thenReturn(1L);
             when(mockRedisDB.getData()).thenReturn(mockDict);
 
             // 设置RedisCore返回数据库数组
@@ -216,7 +216,7 @@ class RdbWriterTest {
             when(mockDict.createSafeSnapshot()).thenReturn(testData);
 
             when(mockRedisDB.getId()).thenReturn(0);
-            when(mockRedisDB.size()).thenReturn(1);
+            when(mockRedisDB.size()).thenReturn(1L);
             when(mockRedisDB.getData()).thenReturn(mockDict);
 
             when(mockRedisCore.getDataBases()).thenReturn(new RedisDB[]{mockRedisDB});
@@ -300,7 +300,7 @@ class RdbWriterTest {
             when(mockDict.createSafeSnapshot()).thenReturn(testData);
 
             when(mockRedisDB.getId()).thenReturn(0);
-            when(mockRedisDB.size()).thenReturn(testData.size());
+            when(mockRedisDB.size()).thenReturn((long) testData.size());
             when(mockRedisDB.getData()).thenReturn(mockDict);
 
             when(mockRedisCore.getDataBases()).thenReturn(new RedisDB[]{mockRedisDB});

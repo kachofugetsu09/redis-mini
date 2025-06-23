@@ -296,9 +296,9 @@ class RedisSetTest {
                 try {
                     // 模拟持久化操作：读取所有数据
                     RedisBytes[] allMembers = redisSet.getAll();
-                    int size = redisSet.size();
+                    long size = redisSet.size();
                       // 验证数据一致性（允许弱一致性）
-                    int sizeDiff = Math.abs(allMembers.length - size);
+                    long sizeDiff = Math.abs(allMembers.length - size);
                     if (sizeDiff <= 2) { // 允许轻微的不一致，这在并发读写时是正常的
                         readSuccessCount.incrementAndGet();
                     } else {

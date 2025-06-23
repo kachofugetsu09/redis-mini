@@ -154,6 +154,43 @@ public class Dict<K,V> {
     private static final int DICT_REHASH_MAX_EMPTY_VISITS = 10;
 
     /**
+     * 获取字典的EntrySet视图。
+     * <p>
+     * 该方法首先通过调用 {@link #createSafeSnapshot()} 来获取一个字典当前状态的
+     * 线程安全快照（一个 {@code Map<K, V>} 的副本）。然后，它返回该快照的
+     * {@code entrySet()}。
+     * </p>
+     * <p>
+     * 这种实现方式确保了：
+     * <ul>
+     * <li><strong>一致性：</strong> 返回的集合反映了快照创建那一精确时刻的字典内容。</li>
+     * <li><strong>隔离性：</strong> 对原始字典的后续修改不会影响到已返回的EntrySet。</li>
+     * <li><strong>线程安全：</strong> 遍历返回的集合是线程安全的，不会抛出
+     * {@code ConcurrentModificationException}。</li>
+     * </ul>
+     * </p>
+     * <p>
+     * 注意：为了匹配 {@code Iterable<? extends Map.Entry<Object, Object>>} 的返回类型，
+     * 内部会创建一个新的 {@code HashMap<Object, Object>} 副本，这会产生一定的开销。
+     * </p>
+     *
+     * @return 一个包含字典所有键值对的 {@code Map.Entry} 集合的只读迭代器。
+     */
+    public Iterable<? extends Map.Entry<Object, Object>> entrySet() {
+        // 1. 首先，获取一个当前字典内容的线程安全快照。
+        final Map<K, V> snapshot = createSafeSnapshot();
+
+        // 2. 为了匹配方法签名中 <Object, Object> 的泛型，需要创建一个新的Map并复制内容。
+        final Map<Object, Object> result = new HashMap<>();
+        for (final Map.Entry<K, V> entry : snapshot.entrySet()) {
+            result.put(entry.getKey(), entry.getValue());
+        }
+
+        // 3. 返回新创建的Map的entrySet视图。
+        return result.entrySet();
+    }
+
+    /**
      * 表示Dict的当前状态，包含两个哈希表（ht0和ht1）以及Rehash索引。
      * 这是一个不可变类，每次状态变更都返回一个新的DictState实例，以支持并发环境下的无锁读取。
      *
