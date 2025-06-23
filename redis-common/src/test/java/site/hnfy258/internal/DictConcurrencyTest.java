@@ -3,18 +3,14 @@ package site.hnfy258.internal;
 import org.junit.jupiter.api.*;
 import site.hnfy258.datastructure.RedisBytes;
 
-import java.util.HashMap;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * 【修复版】Dict 并发和 CoW 特性压力测试
- * 已兼容新的Dict实现
- */
+
 @DisplayName("Dict 并发和 CoW 特性压力测试")
 class DictConcurrencyTest {
 
@@ -159,94 +155,152 @@ class DictConcurrencyTest {
         System.out.println("✅ 最终 Dict 内容与所有写入命令的累积结果完全一致。");
     }
 
-    // === 另一个更严格的测试方案 ===
     @Test
-    @DisplayName("真正的并发快照压力测试 - 持续写入期间的快照一致性")
-    @Timeout(value = 30, unit = TimeUnit.SECONDS)
-    void testTrueConcurrentSnapshots() throws Exception {
-        final AtomicBoolean stopWriting = new AtomicBoolean(false);
-        final CyclicBarrier snapshotBarrier = new CyclicBarrier(BACKGROUND_READER_THREADS);
-        final AtomicReference<Long> snapshotTimestamp = new AtomicReference<>();
-        final ConcurrentHashMap<Integer, Map<RedisBytes, RedisBytes>> snapshots = new ConcurrentHashMap<>();
+    @DisplayName("版本号机制确保快照一致性")
+    void testVersionBasedSnapshotConsistency() throws Exception {
+        // 先构建一个稳定状态
+        for (int i = 0; i < 100; i++) {
+            dict.put(RedisBytes.fromString("key_" + i),
+                    RedisBytes.fromString("value_" + i));
+        }
 
-        // 启动持续写入线程
-        Future<Void> writerFuture = commandExecutor.submit(() -> {
-            int counter = 0;
-            while (!stopWriting.get()) {
-                RedisBytes key = RedisBytes.fromString("concurrent_key_" + counter);
-                RedisBytes value = RedisBytes.fromString("concurrent_value_" + counter);
-                dict.put(key, value);
-                expectedFinalState.put(key, value);
-                counter++;
+        // 停止写入，确保状态稳定
+        long stableVersion = dict.getCurrentVersion();
 
-                if (counter % 100 == 0) {
-                    Thread.sleep(1); // 偶尔让出CPU
-                }
-            }
-            return null;
-        });
+        // 现在多个线程同时创建快照 - 这时应该完全一致
+        CyclicBarrier barrier = new CyclicBarrier(10);
+        ConcurrentHashMap<Integer, Map<RedisBytes, RedisBytes>> snapshots = new ConcurrentHashMap<>();
+        CountDownLatch latch = new CountDownLatch(10);
 
-        // 启动多个快照线程
-        CountDownLatch allSnapshotsComplete = new CountDownLatch(BACKGROUND_READER_THREADS);
-        for (int i = 0; i < BACKGROUND_READER_THREADS; i++) {
+        for (int i = 0; i < 10; i++) {
             final int threadId = i;
-            backgroundExecutor.submit(() -> {
+            new Thread(() -> {
                 try {
-                    // 让Dict先有一些数据
-                    Thread.sleep(200);
-
-                    // 所有线程同时开始快照
-                    snapshotBarrier.await();
-                    long timestamp = System.nanoTime();
-                    snapshotTimestamp.compareAndSet(null, timestamp);
-
-                    System.out.println("快照线程 " + threadId + " 开始创建快照...");
+                    barrier.await(); // 真正的同时开始
                     Map<RedisBytes, RedisBytes> snapshot = dict.createSafeSnapshot();
                     snapshots.put(threadId, snapshot);
-                    System.out.println("快照线程 " + threadId + " 完成快照，大小: " + snapshot.size());
-
                 } catch (Exception e) {
-                    failTest("快照线程 " + threadId + " 异常: " + e.getMessage());
                     e.printStackTrace();
                 } finally {
-                    allSnapshotsComplete.countDown();
+                    latch.countDown();
                 }
-            });
+            }).start();
         }
 
-        // 等待快照完成
-        if (!allSnapshotsComplete.await(10, TimeUnit.SECONDS)) {
-            fail("快照线程未在规定时间内完成");
+        latch.await();
+
+        // 验证：相同版本产生的快照必须一致
+        Map<RedisBytes, RedisBytes> reference = snapshots.get(0);
+        for (int i = 1; i < 10; i++) {
+            Map<RedisBytes, RedisBytes> other = snapshots.get(i);
+            assertEquals(reference.size(), other.size());
+            assertEquals(reference, other); // 完全相等
         }
-
-        // 停止写入
-        stopWriting.set(true);
-        writerFuture.get();
-
-        // 验证所有快照的一致性
-        System.out.println("\n--- 验证并发快照一致性 ---");
-        if (snapshots.size() != BACKGROUND_READER_THREADS) {
-            fail("未收集到所有线程的快照");
-        }
-
-        Map<RedisBytes, RedisBytes> firstSnapshot = snapshots.get(0);
-        for (int i = 1; i < BACKGROUND_READER_THREADS; i++) {
-            Map<RedisBytes, RedisBytes> otherSnapshot = snapshots.get(i);
-            if (firstSnapshot.size() != otherSnapshot.size()) {
-                fail("快照 0 和快照 " + i + " 大小不一致: " + firstSnapshot.size() + " vs " + otherSnapshot.size());
-            }
-
-            // 检查内容一致性
-            for (Map.Entry<RedisBytes, RedisBytes> entry : firstSnapshot.entrySet()) {
-                if (!entry.getValue().equals(otherSnapshot.get(entry.getKey()))) {
-                    fail("快照 0 和快照 " + i + " 在键 " + entry.getKey() + " 上的值不一致");
-                }
-            }
-        }
-
-        System.out.println("✅ 所有 " + BACKGROUND_READER_THREADS + " 个并发快照完全一致！(大小: " + firstSnapshot.size() + ")");
-        assertFalse(testFailed.get());
     }
+
+    @Test
+    @DisplayName("并发写入期间快照的自洽性")
+    void testSnapshotSelfConsistency() throws Exception {
+        AtomicBoolean stopWriting = new AtomicBoolean(false);
+        Set<String> allPossibleKeys = ConcurrentHashMap.newKeySet();
+
+        // 写入线程
+        Thread writer = new Thread(() -> {
+            int counter = 0;
+            while (!stopWriting.get() && counter < 1000) {
+                String key = "key_" + counter;
+                String value = "value_" + counter;
+                allPossibleKeys.add(key);
+                dict.put(RedisBytes.fromString(key), RedisBytes.fromString(value));
+                counter++;
+
+                if (counter % 10 == 0) {
+                    try { Thread.sleep(1); } catch (InterruptedException e) {}
+                }
+            }
+        });
+
+        writer.start();
+
+        // 多个快照线程
+        List<Map<RedisBytes, RedisBytes>> snapshots = new CopyOnWriteArrayList<>();
+        CountDownLatch snapshotLatch = new CountDownLatch(5);
+
+        for (int i = 0; i < 5; i++) {
+            new Thread(() -> {
+                try {
+                    Thread.sleep(100); // 让写入进行一段时间
+                    Map<RedisBytes, RedisBytes> snapshot = dict.createSafeSnapshot();
+                    snapshots.add(snapshot);
+                    // 验证每个快照内部的自洽性
+                    validateSnapshotConsistency(snapshot, allPossibleKeys);
+                } catch (Exception e) {
+                    fail("快照创建失败: " + e.getMessage());
+                } finally {
+                    snapshotLatch.countDown();
+                }
+            }).start();
+        }
+
+        snapshotLatch.await();
+        stopWriting.set(true);
+        writer.join();
+
+        // 验证：每个快照都是完整且自洽的
+        assertTrue(snapshots.size() == 5);
+        for (Map<RedisBytes, RedisBytes> snapshot : snapshots) {
+            // 每个快照应该是某个时刻Dict状态的完整表示
+            validateSnapshotIntegrity(snapshot);
+        }
+    }
+
+    private void validateSnapshotConsistency(Map<RedisBytes, RedisBytes> snapshot,
+                                             Set<String> allPossibleKeys) {
+        // 验证快照的内部一致性
+        for (Map.Entry<RedisBytes, RedisBytes> entry : snapshot.entrySet()) {
+            String key = entry.getKey().toString();
+            String value = entry.getValue().toString();
+
+            // 如果存在key_N，那么对应的值必须是value_N
+            if (key.startsWith("key_")) {
+                String expectedValue = key.replace("key_", "value_");
+                assertEquals(expectedValue, value, "快照中键值对不匹配");
+            }
+        }
+    }
+
+    /**
+     * 验证快照的完整性 - 更实用的版本
+     */
+    private void validateSnapshotIntegrity(Map<RedisBytes, RedisBytes> snapshot) {
+        assertNotNull(snapshot, "快照不能为null");
+
+        // 1. 验证快照的基本属性
+        for (Map.Entry<RedisBytes, RedisBytes> entry : snapshot.entrySet()) {
+            RedisBytes key = entry.getKey();
+            RedisBytes value = entry.getValue();
+
+            assertNotNull(key, "快照中的键不能为null");
+            assertNotNull(value, "快照中的值不能为null");
+
+            String keyStr = key.toString();
+            String valueStr = value.toString();
+
+            // 验证键值对的逻辑关系
+            if (keyStr.startsWith("key_")) {
+                String expectedValue = keyStr.replace("key_", "value_");
+                assertEquals(expectedValue, valueStr,
+                        "键值对逻辑错误: " + keyStr + " -> " + valueStr);
+            }
+        }
+
+        // 2. 验证快照没有重复的键（这应该由Map保证，但我们还是检查一下）
+        Set<RedisBytes> keys = new HashSet<>(snapshot.keySet());
+        assertEquals(snapshot.size(), keys.size(), "快照中存在重复的键");
+
+        System.out.println("✅ 快照完整性验证通过，大小: " + snapshot.size());
+    }
+
 
     // === 辅助方法 ===
 

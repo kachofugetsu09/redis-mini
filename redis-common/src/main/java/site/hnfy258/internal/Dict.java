@@ -8,6 +8,14 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
+ * 这是一个使用版本号实现的单写多读的线程安全的哈希表，其实在正常情况下是单写单读，
+ * 但是这个设计和redis的设计有一个不同，就是redis本身在执行rdb快照的时候
+ * 你触发rewriteaof,会导致他并不立刻执行，而是等待当前的rdb快照操作完成后再执行。
+ * 但是这个哈希表的设计就不同了，因为他支持单写多读，所以可以同时进行aof的重写和rdb的持久化而不阻塞
+ * 这就是这个Dict的亮点所在。
+ */
+
+/**
  * 表示哈希表中的一个键值对条目（节点）。
  * 采用不可变设计，每次修改（更新值、移除）都返回一个新的DictEntry实例，
  * 从而在并发场景下提供更好的线程安全性和简化逻辑。
@@ -110,7 +118,7 @@ class DictHashTable<K, V> {
     /** 用于计算索引的掩码，等于 size - 1。 */
     final int sizemask;
     /** 当前哈希表中已使用的条目数量。 */
-    long used;
+    volatile long used;
 
     /**
      * 构造一个新的DictHashTable实例。
@@ -234,11 +242,12 @@ public class Dict<K,V> {
         }
     }
 
-    /** 当前字典的状态，使用volatile确保多线程快照能看到最新状态。 */
-    private volatile DictState<K, V> state;
+    /** 当前字典的状态。 */
+    private  DictState<K, V> state;
 
     /** 版本号生成器，用于追踪状态变更 */
-    private final AtomicLong versionGenerator = new AtomicLong(0);
+    private AtomicLong versionGenerator = new AtomicLong(0);
+
 
     /** 快照缓存，key是版本号，value是对应版本的快照 */
     private final ConcurrentHashMap<Long, VersionedSnapshot<K, V>> snapshotCache = new ConcurrentHashMap<>();
@@ -392,7 +401,7 @@ public class Dict<K,V> {
      * @throws IllegalArgumentException 如果键为null。
      * @throws IllegalStateException 如果哈希表未正确初始化。
      */
-    public synchronized V put(final K key, final V value) {
+    public  V put(final K key, final V value) {
         if (key == null) throw new IllegalArgumentException("Key cannot be null.");
 
         final int keyHash = hash(key);
@@ -479,7 +488,7 @@ public class Dict<K,V> {
      * @param key 要移除的键。
      * @return 被移除键对应的值，如果键不存在则返回null。
      */
-    public synchronized V remove(final K key) {
+    public  V remove(final K key) {
         if (key == null) return null;
 
         final int keyHash = hash(key);
@@ -696,7 +705,7 @@ public class Dict<K,V> {
      * 清空字典中所有条目。
      * 将字典重置为初始状态，只包含一个空的ht0。
      */
-    public synchronized void clear() {
+    public  void clear() {
         long newVersion = versionGenerator.incrementAndGet();
         this.state = new DictState<>(new DictHashTable<>(DICT_HT_INITIAL_SIZE), null, -1, newVersion);
         snapshotCache.clear(); // 清空所有缓存的快照
@@ -805,48 +814,33 @@ public class Dict<K,V> {
      * @return 字典内容的HashMap快照，保证一致性。
      */
     public Map<K, V> createSafeSnapshot() {
-        // 获取当前状态的版本号
         final long currentVersion = state.version;
 
-        // 尝试从缓存中获取已有的快照
+        // 检查缓存
         VersionedSnapshot<K, V> cachedSnapshot = snapshotCache.get(currentVersion);
         if (cachedSnapshot != null) {
-            return new HashMap<>(cachedSnapshot.data); // 返回快照的副本
+            return new HashMap<>(cachedSnapshot.data);
         }
 
-        // 缓存中没有，需要创建新快照
-        // 为了确保一致性，使用synchronized防止并发创建相同版本的快照
-        synchronized (this) {
-            // 双重检查：可能在等待锁期间已有其他线程创建了快照
-            cachedSnapshot = snapshotCache.get(currentVersion);
-            if (cachedSnapshot != null) {
-                return new HashMap<>(cachedSnapshot.data);
-            }
+        // 创建新快照
+        final Map<K, V> snapshot = new HashMap<>();
+        final DictState<K, V> current = state;
 
-            // 再次检查版本号是否仍然有效（可能在等待锁期间状态已更新）
-            if (state.version != currentVersion) {
-                // 版本已变更，递归调用获取最新版本的快照
-                return createSafeSnapshot();
-            }
-
-            // 创建新快照
-            final Map<K, V> snapshot = new HashMap<>();
-            final DictState<K, V> current = state;
-
-            // 从ht0创建快照
-            createSnapshotFromTable(current.ht0, snapshot);
-
-            // 如果正在Rehash，也从ht1创建快照
-            if (current.rehashIndex != -1 && current.ht1 != null) {
-                createSnapshotFromTable(current.ht1, snapshot);
-            }
-
-            // 缓存新创建的快照
-            VersionedSnapshot<K, V> newSnapshot = new VersionedSnapshot<>(currentVersion, new HashMap<>(snapshot));
-            snapshotCache.put(currentVersion, newSnapshot);
-
-            return snapshot;
+        createSnapshotFromTable(current.ht0, snapshot);
+        if (current.rehashIndex != -1 && current.ht1 != null) {
+            createSnapshotFromTable(current.ht1, snapshot);
         }
+
+        // 缓存快照
+        VersionedSnapshot<K, V> newSnapshot = new VersionedSnapshot<>(currentVersion, snapshot);
+        snapshotCache.put(currentVersion, newSnapshot);
+
+        // 清理旧缓存
+        if (snapshotCache.size() > CACHE_CLEANUP_THRESHOLD) {
+            cleanupOldSnapshots();
+        }
+
+        return new HashMap<>(snapshot); // 返回副本保证安全
     }
 
     /**
