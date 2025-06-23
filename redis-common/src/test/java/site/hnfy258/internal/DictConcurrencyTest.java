@@ -60,7 +60,7 @@ class DictConcurrencyTest {
         int rehashSteps = 0;
         Dict.DictState<?, ?> currentState;
         do {
-            currentState = dict.state.get();
+            currentState = dict.state;
             if (currentState.rehashIndex == -1) break;
             dict.rehashStep(); // 积极推进 rehash
             rehashSteps++;
@@ -142,7 +142,7 @@ class DictConcurrencyTest {
             }
             System.out.println("预填充 " + INITIAL_KEYS_FOR_TEST + " 键完成，Dict 大小: " + dict.size());
             ensureRehashComplete(dict);
-            System.out.println("预填充后 Dict 主表容量: " + dict.state.get().ht0.size);
+            System.out.println("预填充后 Dict 主表容量: " + dict.state.ht0.size);
 
             System.out.println("创建快照...");
             Map<RedisBytes, RedisBytes> snapshotAtFork = dict.createSafeSnapshot();
@@ -208,7 +208,7 @@ class DictConcurrencyTest {
             }
             System.out.println("预填充 Dict 完成，大小: " + dict.size());
             ensureRehashComplete(dict);
-            System.out.println("初始 Rehash 完成，Dict 主表容量: " + dict.state.get().ht0.size);
+            System.out.println("初始 Rehash 完成，Dict 主表容量: " + dict.state.ht0.size);
         }
 
         @Test
@@ -363,7 +363,7 @@ class DictConcurrencyTest {
         int rehashSteps = 0;
         Dict.DictState<?, ?> currentState;
         do {
-            currentState = dict.state.get();
+            currentState = dict.state;
             if (currentState.rehashIndex == -1) break;
             dict.rehashStep();
             rehashSteps++;
