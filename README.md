@@ -34,7 +34,7 @@ Redis Mini 采用模块化架构，每个模块都专注于特定的功能领域
 
 ```bash
 # 克隆项目
-git clone https://github.com/your-username/redis-mini.git
+git clone https://github.com/kachofugetsu09/redis-mini.git
 
 # 进入项目目录
 cd redis-mini
