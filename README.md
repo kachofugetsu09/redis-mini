@@ -2,7 +2,7 @@
 
 ## 项目概览
 
-Redis Mini 是一个用Java实现的Redis服务器，它忠实地复刻了Redis的核心功能和特性。本项目不仅是一个功能完整的Redis服务器，更是一个深入学习Redis内部机制和分布式系统设计的绝佳教材。
+Redis Mini 是一个用Java实现的Redis服务器，它忠实地复刻了Redis的核心功能和特性。是一个实现了五大基础数据结构，aof，rdb持久化，主从同步功能的Java版本redis服务端。
 
 ### 核心特性
 
