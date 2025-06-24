@@ -153,7 +153,7 @@ public class RedisServerConfig {
      * </ul>
      */
     @Builder.Default
-    private boolean rdbEnabled = true;
+    private boolean rdbEnabled = false;
     
     /**
      * RDB文件路径。

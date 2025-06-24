@@ -99,9 +99,42 @@ OK
   * 命令处理和执行
   * 服务器生命周期管理
 
+
+## Benchmark测试
+## Redis 性能百分比对比：Java MiniRedis vs. 官方 Redis 8.0
+
+**（所有百分比表示：MiniRedis 性能是官方 Redis 的百分之多少）**
+#### 测试命令：
+```bash
+./redis-benchmark.exe -h 127.0.0.1 -p 6379 -c 50 -n 50000 -t PING_INLINE,PING_BULK,SET,GET,INCR,LPUSH,RPUSH,LPOP,RPOP,SADD,HSET,SPOP,ZADD,lpush:rand:new,LRANGE_1,LRANGE_3,LRANGE_5,LRANGE_10,MSET
+```
+
+#### 虚拟机参数
+```
+-Xms24G -Xmx24G -XX:+UseZGC -XX:MaxRAMPercentage=80.0 -XX:ZAllocationSpikeTolerance=5.0 -XX:ZCollectionInterval=300 -XX:ZUncommitDelay=600 -XX:+ZProactive -XX:+UnlockDiagnosticVMOptions -XX:NativeMemoryTracking=summary -XX:+PrintNMTStatistics -Xlog:gc*,gc+heap=debug:file=logs/zgc_gc.log:time,level,tags
+```
+
+| 命令        | 官方 Redis8 RPS (req/s) | MiniRedis RPS (req/s) | RPS 比例 (%) | 官方 Redis8 p50 (ms) | MiniRedis p50 (ms) | p50 比例 (%) | 官方 Redis8 p99 (ms) | MiniRedis p99 (ms) | p99 比例 (%) | 
+| :---------- |:----------------------| :-------------------- | :----------- |:-------------------| :----------------- | :----------- |:-------------------| :----------------- | :----------- | 
+| PING_INLINE | 68776                 | 48403                 | 70.4%        | 0.551              | 0.807              | 146.5%       | 0.895              | 1.295              | 144.7%       |
+| SET         | 67204                 | 52138                 | 77.6%        | 0.551              | 0.695              | 126.1%       | 0.951              | 1.215              | 127.8%       | 
+| GET         | 71531                 | 54585                 | 76.3%        | 0.471              | 0.639              | 135.7%       | 0.839              | 1.183              | 141.0%       | 
+| INCR        | 72150                 | 45704                 | 63.3%        | 0.479              | 0.831              | 173.5%       | 0.871              | 1.559              | 179.0%       | 
+| LPUSH       | 71839                 | 45413                 | 63.2%        | 0.519              | 0.871              | 167.8%       | 0.919              | 1.455              | 158.3%       | 
+| RPUSH       | 73206                 | 45579                 | 62.3%        | 0.511              | 0.799              | 156.4%       | 0.839              | 1.455              | 173.4%       | 
+| LPOP        | 72464                 | 50000                 | 69.0%        | 0.519              | 0.719              | 138.5%       | 0.879              | 1.263              | 143.7%       | 
+| RPOP        | 63857                 | 52854                 | 82.8%        | 0.551              | 0.583              | 105.8%       | 1.271              | 1.095              | 86.1%        |
+| SADD        | 71736                 | 41667                 | 58.1%        | 0.503              | 0.791              | 157.3%       | 0.895              | 1.527              | 170.6%       | 
+| HSET        | 70822                 | 47393                 | 67.0%        | 0.527              | 0.783              | 148.6%       | 0.871              | 1.335              | 153.3%       | 
+| SPOP        | 71942                 | 37707                 | 52.4%        | 0.471              | 0.671              | 142.5%       | 0.943              | 1.503              | 159.4%       | 
+| ZADD        | 69541                 | 25164                 | 36.2%        | 0.535              | 0.647              | 120.9%       | 0.911              | 3.111              | 341.5%       | 
+| MSET (10)   | 50607                 | 43745                 | 86.4%        | 0.791              | 0.567              | 71.7%        | 1.255              | 1.359              | 108.3%       | 
+| **平均比例** |                       |                       | **67.4%**    |                    |                    | **139.3%**   |                    |                    | **168.2%**   | 
+
+
 ## 开发计划
 - [ ] 重构和优化replication模块，具体存在的问题可以参考replication模块的文档
-- [ ] 升级到Java21，利用ZGC带来的性能提升解决benchmark中长尾延迟过长的问题
+- [x] 升级到Java21，利用ZGC带来的性能提升解决benchmark中长尾延迟过长的问题
 - [ ] 添加Redis Sentinel支持
 - [ ] 实现Redis Cluster集群功能
 - [ ] 实现更多的Redis命令

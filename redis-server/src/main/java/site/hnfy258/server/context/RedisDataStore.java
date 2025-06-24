@@ -146,7 +146,7 @@ public class RedisDataStore {
      */
     public void put(final RedisBytes key, final RedisData value) {
         if (key == null || value == null) {
-            throw new IllegalArgumentException("键和值都不能为null");
+            log.error("键和值都不能为null");
         }
         redisCore.put(key, value);
     }
