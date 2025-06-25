@@ -46,6 +46,9 @@ public abstract class Resp {
     
     /** 最大缓存数字 */
     protected static final int MAX_CACHED_NUMBER = 255;
+
+    private static final int PROTO_MAX_BULK_LEN = 512 * 1024 * 1024; // 最大 512MB
+    private static final int PROTO_MAX_ARRAY_LEN = 1024 * 1024;
     
     // 静态初始化数字缓存
     static {
@@ -105,8 +108,12 @@ public abstract class Resp {
                 case '-': // 错误消息
                     return new Errors(getString(buffer));
                       case ':': // 整数
-                    return RespInteger.valueOf(getNumber(buffer));                case '$': // 批量字符串
+                    return RespInteger.valueOf(getNumber(buffer));
+                    case '$': // 批量字符串
                     int length = getNumber(buffer);
+                        if (length > PROTO_MAX_BULK_LEN) {
+                            throw new IllegalArgumentException("协议错误：批量字符串的长度超过最大限制 " + PROTO_MAX_BULK_LEN);
+                        }
                     if (length == -1) {
                         // NULL BulkString - getNumber已经消费了完整的"-1\r\n"
                         return BulkString.create((byte[]) null);
@@ -131,21 +138,14 @@ public abstract class Resp {
                         buffer.skipBytes(length);
                         
                         // 我们可以使用零拷贝模式，因为这个数组是我们控制的
-                        isZeroCopy = true;
-                    } else if (buffer.isDirect() && length >= 1024) {
-                        // 对于大的直接内存 ByteBuf，使用 NIO 优化
-                        content = new byte[length];
-                        buffer.readBytes(content);
-                        // 我们可以使用零拷贝模式，因为这个数组是我们控制的
-                        isZeroCopy = true;
                     } else {
                         // 回退到标准读取方式（小数据或堆内存）
                         content = new byte[length];
                         buffer.readBytes(content);
                         // 我们可以使用零拷贝模式，因为这个数组是我们控制的
-                        isZeroCopy = true;
                     }
-                      // 验证结尾的 CRLF
+                        isZeroCopy = true;
+                        // 验证结尾的 CRLF
                     if (buffer.readByte() != '\r' || buffer.readByte() != '\n') {
                         throw new IllegalArgumentException("BulkString格式错误：期望\\r\\n结尾");
                     }
@@ -156,6 +156,9 @@ public abstract class Resp {
                             : BulkString.create(content);
                       case '*': // 数组
                     int number = getNumber(buffer);
+                          if (number > PROTO_MAX_ARRAY_LEN) {
+                              throw new IllegalArgumentException("协议错误：数组的元素数量超过最大限制 " + PROTO_MAX_ARRAY_LEN);
+                          }
                     if (number < 0) {
                         // NULL Array - 使用缓存实例
                         return RespArray.NULL;
@@ -166,7 +169,8 @@ public abstract class Resp {
                         return RespArray.EMPTY;
                     }
                     
-                    Resp[] array = new Resp[number];                    for (int i = 0; i < number; i++) {
+                    Resp[] array = new Resp[number];
+                    for (int i = 0; i < number; i++) {
                         if (buffer.readableBytes() <= 0) {
                             throw new IllegalStateException("数组元素数据不完整");
                         }

@@ -61,7 +61,8 @@ public class RespDecoder extends ByteToMessageDecoder {
                 if (firstByte == '\n' || firstByte == '\r') {
                     in.skipBytes(1);
                     continue;
-                }                // 3. 判断是RESP格式还是INLINE格式
+                }
+                // 3. 判断是RESP格式还是INLINE格式
                 if (isValidRespType(firstByte)) {
                     // 标准RESP协议格式
                     try {
