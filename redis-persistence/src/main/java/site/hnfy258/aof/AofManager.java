@@ -9,6 +9,7 @@ import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import site.hnfy258.aof.loader.AofLoader;
 import site.hnfy258.aof.writer.AofBatchWriter;
+import site.hnfy258.aof.writer.AofSyncPolicy;
 import site.hnfy258.aof.writer.AofWriter;
 import site.hnfy258.aof.writer.Writer;
 import site.hnfy258.core.RedisCore;
@@ -106,7 +107,7 @@ public class AofManager {
         // 1. 初始化AOF相关组件
         this.aofWriter = new AofWriter(new File(fileName), preallocated, 
                                       flushInterval, null, this.redisCore);
-        this.batchWriter = new AofBatchWriter(aofWriter, flushInterval);
+        this.batchWriter = new AofBatchWriter(aofWriter,flushInterval);
         // 使用RedisCore创建AofLoader，确保数据加载到正确的数据库
         this.aofLoader = new AofLoader(fileName, this.redisCore);
         log.info("AofManager使用RedisCore接口模式初始化完成，文件: {}", fileName);

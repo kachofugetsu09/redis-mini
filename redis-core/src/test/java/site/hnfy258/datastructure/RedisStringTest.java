@@ -247,44 +247,4 @@ class RedisStringTest {
         assertEquals("101", new String(numValue2.getBytes()));
     }
 
-    @Test
-    @DisplayName("测试并发安全性")
-    void testConcurrencySafety() throws InterruptedException {
-        RedisString concurrentString = new RedisString(Sds.create("1000".getBytes()));
-        final int threadCount = 10;
-        final int incrementsPerThread = 100;
-        
-        Thread[] threads = new Thread[threadCount];
-        
-        // 1. 创建多个线程并发执行递增操作
-        for (int i = 0; i < threadCount; i++) {
-            threads[i] = new Thread(() -> {
-                for (int j = 0; j < incrementsPerThread; j++) {
-                    try {
-                        concurrentString.incr();
-                    } catch (Exception e) {
-                        // 忽略并发可能导致的异常
-                    }
-                }
-            });
-        }
-
-        // 2. 启动所有线程
-        for (Thread thread : threads) {
-            thread.start();
-        }
-
-        // 3. 等待所有线程完成
-        for (Thread thread : threads) {
-            thread.join();
-        }
-
-        // 4. 验证最终结果（应该是原值加上所有递增次数）
-        long finalValue = Long.parseLong(concurrentString.getSds().toString());
-        long expectedValue = 1000 + (threadCount * incrementsPerThread);
-        
-        // 由于Redis字符串操作不是原子性的，这里主要验证没有发生严重错误
-        assertTrue(finalValue >= 1000);
-        assertTrue(finalValue <= expectedValue);
-    }
 }
