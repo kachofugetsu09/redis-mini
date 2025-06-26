@@ -250,7 +250,6 @@ public class AofLoader {
             }
 
             // 3. 通过RedisCore接口执行命令
-            // 这样避免了对server层CommandType和Command的依赖
             final boolean success = redisCore.executeCommand(commandName, args);
 
             if (!success) {

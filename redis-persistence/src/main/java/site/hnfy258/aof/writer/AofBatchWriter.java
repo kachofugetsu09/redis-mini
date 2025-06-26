@@ -154,13 +154,7 @@ public class AofBatchWriter implements AutoCloseable {
 
 
     /**
-     * AOF 批处理主循环 - 低延迟优先策略
-     *
-     * 策略：
-     * 1. 获取第一个元素后立即开始计时
-     * 2. 在超时时间内尽可能收集更多元素
-     * 3. 达到批次大小上限或超时则立即写入
-     * 4. EVERYSEC/ALWAYS模式下写入后标记待刷盘数据
+     * AOF 批处理主循环
      */
     public void processWriteQueue() {
         ByteBuf[] batch = new ByteBuf[MAX_BATCH_SIZE];
@@ -169,75 +163,128 @@ public class AofBatchWriter implements AutoCloseable {
             int batchSize = 0;
 
             try {
-                // 第一步：等待第一个元素（阻塞等待）
-                ByteBuf firstItem;
-                try {
-                    firstItem = writeQueue.take();
-                } catch (InterruptedException e) {
-                    if (!running.get()) {
-                        break;
-                    }
-                    Thread.currentThread().interrupt();
-                    continue;
+                // 收集批次数据
+                batchSize = collectBatch(batch);
+                if (batchSize > 0) {
+                    // 批量写入磁盘
+                    writeBatch(batch, batchSize);
                 }
-
-                // 记录批次开始时间
-                long batchStartTime = System.nanoTime();
-
-                // 第二步：将第一个元素加入批次
-                batch[0] = firstItem;
-                batchSize = 1;
-
-                // 第三步：在超时时间内收集更多元素
-                while (batchSize < MAX_BATCH_SIZE) {
-                    long elapsed = System.nanoTime() - batchStartTime;
-                    if (elapsed >= BATCH_TIMEOUT_NANOS) {
-                        break; // 超时，立即处理当前批次
-                    }
-
-                    // 计算剩余超时时间
-                    long remainingTimeout = BATCH_TIMEOUT_NANOS - elapsed;
-
-                    ByteBuf item;
-                    try {
-                        item = writeQueue.poll(remainingTimeout, TimeUnit.NANOSECONDS);
-                    } catch (InterruptedException e) {
-                        if (!running.get()) {
-                            break;
-                        }
-                        Thread.currentThread().interrupt();
-                        break;
-                    }
-
-                    if (item == null) {
-                        break; // 超时或队列为空，处理当前批次
-                    }
-
-                    batch[batchSize++] = item;
-                }
-
-                // 第四步：批量写入磁盘
-                writeBatch(batch, batchSize);
-
             } catch (Exception e) {
                 log.error("AOF 批处理过程中发生异常", e);
             } finally {
                 // 清理当前批次的资源
-                for (int i = 0; i < batchSize; i++) {
-                    if (batch[i] != null) {
-                        try {
-                            batch[i].release();
-                        } catch (Exception releaseException) {
-                            log.warn("释放ByteBuf时发生异常", releaseException);
-                        }
-                        batch[i] = null;
-                    }
-                }
+                cleanupBatch(batch, batchSize);
             }
         }
 
         log.info("AOF 批处理主循环已退出");
     }
+
+    /**
+     * 收集批次数据
+     * @param batch 批次数组
+     * @return 实际收集到的元素数量
+     */
+    private int collectBatch(ByteBuf[] batch) {
+        // 第一步：等待第一个元素（阻塞等待）
+        ByteBuf firstItem = waitForFirstItem();
+        if (firstItem == null) {
+            return 0; // 被中断或停止运行
+        }
+
+        // 第二步：将第一个元素加入批次
+        batch[0] = firstItem;
+        int batchSize = 1;
+
+        // 第三步：在超时时间内收集更多元素
+        long batchStartTime = System.nanoTime();
+        batchSize += collectAdditionalItems(batch, batchSize, batchStartTime);
+
+        return batchSize;
+    }
+
+    /**
+     * 等待队列中的第一个元素
+     * @return 第一个元素，如果被中断或停止运行则返回null
+     */
+    private ByteBuf waitForFirstItem() {
+        try {
+            return writeQueue.take();
+        } catch (InterruptedException e) {
+            if (!running.get()) {
+                return null;
+            }
+            Thread.currentThread().interrupt();
+            return null;
+        }
+    }
+
+    /**
+     * 收集批次中的额外元素
+     * @param batch 批次数组
+     * @param currentSize 当前批次大小
+     * @param batchStartTime 批次开始时间
+     * @return 新增的元素数量
+     */
+    private int collectAdditionalItems(ByteBuf[] batch, int currentSize, long batchStartTime) {
+        int additionalCount = 0;
+
+        while (currentSize + additionalCount < MAX_BATCH_SIZE) {
+            long elapsed = System.nanoTime() - batchStartTime;
+            if (elapsed >= BATCH_TIMEOUT_NANOS) {
+                break; // 超时，立即处理当前批次
+            }
+
+            // 计算剩余超时时间
+            long remainingTimeout = BATCH_TIMEOUT_NANOS - elapsed;
+
+            ByteBuf item = pollWithTimeout(remainingTimeout);
+            if (item == null) {
+                break; // 超时或队列为空，处理当前批次
+            }
+
+            batch[currentSize + additionalCount] = item;
+            additionalCount++;
+        }
+
+        return additionalCount;
+    }
+
+    /**
+     * 在指定超时时间内从队列中获取元素
+     * @param timeoutNanos 超时时间（纳秒）
+     * @return 元素，如果超时或被中断则返回null
+     */
+    private ByteBuf pollWithTimeout(long timeoutNanos) {
+        try {
+            return writeQueue.poll(timeoutNanos, TimeUnit.NANOSECONDS);
+        } catch (InterruptedException e) {
+            if (!running.get()) {
+                return null;
+            }
+            Thread.currentThread().interrupt();
+            return null;
+        }
+    }
+
+    /**
+     * 清理批次中的资源
+     * @param batch 批次数组
+     * @param batchSize 批次大小
+     */
+    private void cleanupBatch(ByteBuf[] batch, int batchSize) {
+        for (int i = 0; i < batchSize; i++) {
+            if (batch[i] != null) {
+                try {
+                    batch[i].release();
+                } catch (Exception releaseException) {
+                    log.warn("释放ByteBuf时发生异常", releaseException);
+                }
+                batch[i] = null;
+            }
+        }
+    }
+
 
     private void writeBatch(ByteBuf[] batch, int batchSize) {
         if (batchSize <= 0) return;
@@ -276,58 +323,61 @@ public class AofBatchWriter implements AutoCloseable {
         int byteSize = byteBuf.readableBytes();
 
         if (byteSize > LARGE_COMMAND_THRESHOLD) {
-            // 大命令直接同步写入
-            try {
-                ByteBuffer byteBuffer = byteBuf.nioBuffer();
-                writer.write(byteBuffer);
-
-                // 根据 AOF 刷盘策略决定是否立即刷盘或标记待刷盘
-                if (syncPolicy == AofSyncPolicy.ALWAYS) {
-                    performFlush();
-                } else if (syncPolicy == AofSyncPolicy.EVERYSEC) {
-                    // 大命令也使用 EVERYSEC 刷盘机制
-                    hasPendingFlush.set(true);
-                }
-
-                log.debug("大命令直接写入完成，大小: {}KB", byteSize / 1024);
-
-            } catch (Exception e) {
-                throw new IOException("大命令写入失败，大小: " + byteSize + " bytes", e);
-            } finally {
-                byteBuf.release();
-            }
-            return;
+            writeLargeCommand(byteBuf, byteSize);
+        } else {
+            writeToQueue(byteBuf);
         }
+    }
+
+    private void writeLargeCommand(ByteBuf byteBuf, int byteSize) throws IOException {
+        log.debug("处理大命令，大小: {}KB", byteSize / 1024);
 
         try {
-            boolean success = writeQueue.offer(byteBuf, 3, TimeUnit.SECONDS);
-            if (!success) {
-                // 队列满时直接同步写入
-                try {
-                    ByteBuffer byteBuffer = byteBuf.nioBuffer();
-                    writer.write(byteBuffer);
+            ByteBuffer byteBuffer = byteBuf.nioBuffer();
+            writer.write(byteBuffer);
+            handleSyncPolicy();
 
-                    if (syncPolicy == AofSyncPolicy.ALWAYS) {
-                        flush();
-                    } else if (syncPolicy == AofSyncPolicy.EVERYSEC) {
-                        hasPendingFlush.set(true);
-                    }
-
-                    log.warn("AOF队列满，直接同步写入 - 队列大小: {}", writeQueue.size());
-                } catch (Exception e) {
-                    throw e;
-                } finally {
-                    byteBuf.release();
-                }
-            }
-        } catch (InterruptedException e) {
+            log.debug("大命令直接写入完成，大小: {}KB", byteSize / 1024);
+        } catch (Exception e) {
+            throw new IOException("大命令写入失败，大小: " + byteSize + " bytes", e);
+        } finally {
             byteBuf.release();
-            Thread.currentThread().interrupt();
-            throw new IOException("写入过程被中断", e);
+        }
+    }
+
+    private void writeToQueue(ByteBuf byteBuf) throws IOException {
+        try {
+            boolean success = writeQueue.offer(byteBuf);
+            if (!success) {
+                handleQueueFull(byteBuf);
+            }
         } catch (Exception e) {
             throw new IOException("写入AOF失败", e);
         }
     }
+
+    private void handleQueueFull(ByteBuf byteBuf) throws IOException {
+        log.warn("AOF队列满，直接同步写入 - 队列大小: {}", writeQueue.size());
+
+        try {
+            ByteBuffer byteBuffer = byteBuf.nioBuffer();
+            writer.write(byteBuffer);
+            handleSyncPolicy();
+        } catch (Exception e) {
+            throw e;
+        } finally {
+            byteBuf.release();
+        }
+    }
+
+    private void handleSyncPolicy() throws IOException {
+        if (syncPolicy == AofSyncPolicy.ALWAYS) {
+            performFlush();
+        } else if (syncPolicy == AofSyncPolicy.EVERYSEC) {
+            hasPendingFlush.set(true);
+        }
+    }
+
 
     public void flush() throws IOException {
         writer.flush();
