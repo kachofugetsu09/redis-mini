@@ -111,7 +111,7 @@ OK
 
 #### 虚拟机参数
 ```
--Xms24G -Xmx24G -XX:+UseZGC -XX:MaxRAMPercentage=80.0 -XX:ZAllocationSpikeTolerance=5.0 -XX:ZCollectionInterval=300 -XX:ZUncommitDelay=600 -XX:+ZProactive -XX:+UnlockDiagnosticVMOptions -XX:NativeMemoryTracking=summary -XX:+PrintNMTStatistics -Xlog:gc*,gc+heap=debug:file=logs/zgc_gc.log:time,level,tags
+-Xms24G -Xmx24G -XX:+UseZGC  -XX:+ZProactive
 ```
 
 | 命令        | 官方 Redis8 RPS (req/s) | MiniRedis RPS (req/s) | RPS 比例 (%) | 官方 Redis8 p50 (ms) | MiniRedis p50 (ms) | p50 比例 (%) | 官方 Redis8 p99 (ms) | MiniRedis p99 (ms) | p99 比例 (%) | 
