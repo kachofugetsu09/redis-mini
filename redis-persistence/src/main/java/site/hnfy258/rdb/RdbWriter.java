@@ -8,9 +8,13 @@ import site.hnfy258.internal.Dict;
 import site.hnfy258.rdb.crc.Crc64OutputStream;
 
 import java.io.*;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Function;
+import java.util.List;
+import java.util.AbstractMap;
+import java.util.ArrayList;
 
 /**
  * RDB文件写入器
@@ -173,17 +177,41 @@ public class RdbWriter {
             return snapshots;
         }
         
+        List<CompletableFuture<Map.Entry<Integer, Map<RedisBytes, RedisData>>>> futures = new ArrayList<>();
+        
         for (final RedisDB db : databases) {
             if (db != null && db.size() > 0 && db.getData() != null) {
-                // 创建数据库快照（已经是线程安全的）
-                final Map<RedisBytes, RedisData> snapshot = db.getData().createSnapshot().toMap();
-                if (snapshot != null) {
-                    snapshots.put(db.getId(), snapshot);
-                    log.debug("创建数据库{}快照，包含{}个键", db.getId(), snapshot.size());
-                }
+                // 使用Dict的异步快照功能
+                CompletableFuture<Map.Entry<Integer, Map<RedisBytes, RedisData>>> future = 
+                    db.getData().createRdbSnapshot()
+                        .thenApply(snapshot -> {
+                            Map<RedisBytes, RedisData> snapshotMap = snapshot.toMap();
+                            return new AbstractMap.SimpleEntry<>(db.getId(), snapshotMap);
+                        });
+                futures.add(future);
             }
         }
-          return snapshots;
+        
+        // 等待所有快照完成
+        try {
+            // 使用allOf等待所有快照创建完成
+            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
+                .get(RdbConstants.SNAPSHOT_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+                
+            // 收集所有快照结果
+            for (CompletableFuture<Map.Entry<Integer, Map<RedisBytes, RedisData>>> future : futures) {
+                Map.Entry<Integer, Map<RedisBytes, RedisData>> entry = future.get();
+                snapshots.put(entry.getKey(), entry.getValue());
+                log.debug("创建数据库{}快照，包含{}个键", entry.getKey(), entry.getValue().size());
+            }
+            
+            return snapshots;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("创建数据库快照时被中断", e);
+        } catch (ExecutionException | TimeoutException e) {
+            throw new RuntimeException("创建数据库快照失败", e);
+        }
     }
 
     /**
@@ -198,6 +226,12 @@ public class RdbWriter {
      */
     private boolean writeRdbFromSnapshotsInternal(final String fileName, 
                                                  final Map<Integer, Map<RedisBytes, RedisData>> dbSnapshots) {
+        // 确保快照不为空
+        if (dbSnapshots == null || dbSnapshots.isEmpty()) {
+            log.error("数据库快照为空，无法写入RDB文件");
+            return false;
+        }
+
         try (final Crc64OutputStream crc64Stream = new Crc64OutputStream(
                 new BufferedOutputStream(new FileOutputStream(fileName)))) {
             
@@ -225,7 +259,9 @@ public class RdbWriter {
             log.error("BGSAVE写入失败", e);
             return false;
         }
-    }    /**
+    }
+
+    /**
      * 从快照写入单个数据库
      * 
      * @param dos 数据输出流
@@ -244,7 +280,9 @@ public class RdbWriter {
             final RedisData value = entry.getValue();
             rdbSaveObject(dos, key, value);
         }
-    }private void saveAllDatabases(DataOutputStream dos) throws IOException {
+    }
+
+    private void saveAllDatabases(DataOutputStream dos) throws IOException {
         RedisDB[] databases = redisCore.getDataBases();
         for(RedisDB db : databases){
            log.info("正在保存数据库: {}", db.getId());

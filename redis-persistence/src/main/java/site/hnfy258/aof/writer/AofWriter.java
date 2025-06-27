@@ -25,6 +25,9 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * AOF 文件写入器
@@ -86,12 +89,145 @@ public class AofWriter implements Writer {
     /**
      * 默认重写缓冲区大小
      */
-    public static final int DEFAULT_REWRITE_BUFFER_SIZE = 100000;
+    private static final int DEFAULT_REWRITE_BUFFER_SIZE = 100000;
+
+    /**
+     * 溢出文件管理器
+     */
+    private final OverflowFileManager overflowManager;
+
+    /**
+     * 内部类：管理溢出文件
+     */
+    private class OverflowFileManager implements AutoCloseable {
+        private File currentOverflowFile;
+        private RandomAccessFile currentRaf;
+        private FileChannel currentChannel;
+        private final AtomicLong totalOverflowBytes = new AtomicLong(0);
+        private final AtomicInteger fileCounter = new AtomicInteger(0);
+        private final List<File> overflowFiles = new CopyOnWriteArrayList<>();
+        private final ReentrantLock lock = new ReentrantLock();
+
+        OverflowFileManager() {
+            createNewOverflowFile();
+        }
+
+        private void createNewOverflowFile() {
+            lock.lock();
+            try {
+                closeCurrentFile();
+                
+                currentOverflowFile = File.createTempFile(
+                    OVERFLOW_FILE_PREFIX + fileCounter.incrementAndGet(),
+                    OVERFLOW_FILE_SUFFIX,
+                    file.getParentFile()
+                );
+                currentRaf = new RandomAccessFile(currentOverflowFile, "rw");
+                currentChannel = currentRaf.getChannel();
+                overflowFiles.add(currentOverflowFile);
+                
+                log.info("创建新的溢出文件: {}", currentOverflowFile.getAbsolutePath());
+            } catch (IOException e) {
+                log.error("创建溢出文件失败", e);
+                throw new RuntimeException("创建溢出文件失败", e);
+            } finally {
+                lock.unlock();
+            }
+        }
+
+        void writeToOverflow(ByteBuf buffer) {
+            lock.lock();
+            try {
+                // 如果当前文件太大，创建新文件
+                if (currentChannel.size() > DEFAULT_REWRITE_BUFFER_SIZE * 2) {
+                    createNewOverflowFile();
+                }
+
+                ByteBuffer nioBuffer = buffer.nioBuffer();
+                int written = 0;
+                while (written < nioBuffer.remaining()) {
+                    written += currentChannel.write(nioBuffer);
+                }
+                totalOverflowBytes.addAndGet(written);
+                currentChannel.force(false);
+                
+                if (written > 0) {
+                    log.info("写入{}字节到溢出文件，总溢出量: {}", written, totalOverflowBytes.get());
+                }
+            } catch (IOException e) {
+                log.error("写入溢出文件失败", e);
+                throw new RuntimeException("写入溢出文件失败", e);
+            } finally {
+                lock.unlock();
+            }
+        }
+
+        void mergeOverflowFiles(FileChannel targetChannel) throws IOException {
+            if (overflowFiles.isEmpty()) {
+                return;
+            }
+
+            log.info("开始合并{}个溢出文件，总大小: {}字节", overflowFiles.size(), totalOverflowBytes.get());
+            
+            // 关闭当前文件以确保所有数据都已写入
+            closeCurrentFile();
+
+            // 按创建顺序合并所有溢出文件
+            for (File overflowFile : overflowFiles) {
+                try (RandomAccessFile raf = new RandomAccessFile(overflowFile, "r");
+                     FileChannel channel = raf.getChannel()) {
+                    
+                    long size = channel.size();
+                    if (size > 0) {
+                        channel.transferTo(0, size, targetChannel);
+                        log.info("合并溢出文件: {}, 大小: {}字节", overflowFile.getAbsolutePath(), size);
+                    }
+                }
+            }
+        }
+
+        private void closeCurrentFile() {
+            if (currentChannel != null) {
+                try {
+                    currentChannel.force(true);
+                    currentChannel.close();
+                } catch (IOException e) {
+                    log.warn("关闭当前溢出文件通道失败", e);
+                }
+                currentChannel = null;
+            }
+            
+            if (currentRaf != null) {
+                try {
+                    currentRaf.close();
+                } catch (IOException e) {
+                    log.warn("关闭当前溢出文件失败", e);
+                }
+                currentRaf = null;
+            }
+        }
+
+        @Override
+        public void close() {
+            closeCurrentFile();
+            
+            // 清理所有溢出文件
+            for (File file : overflowFiles) {
+                try {
+                    Files.deleteIfExists(file.toPath());
+                    log.info("清理溢出文件: {}", file.getAbsolutePath());
+                } catch (IOException e) {
+                    log.warn("清理溢出文件失败: {}", file.getAbsolutePath(), e);
+                }
+            }
+            overflowFiles.clear();
+        }
+    }
 
     /**
      * 重写缓冲区队列
      */
-    BlockingQueue<ByteBuf> rewriteBufferQueue;
+    private final BlockingQueue<ByteBuf> rewriteBufferQueue;
 
     /**
      * Redis 核心接口
@@ -106,6 +242,16 @@ public class AofWriter implements Writer {
     private final ByteBufAllocator allocator;
 
     private static final int DEFAULT_BUFFER_SIZE = 8192;
+
+    private static final long SNAPSHOT_TIMEOUT_MS = 30_000L;  // 30秒超时
+
+    private static final int BUFFER_DRAIN_TIMEOUT = 5000; // 5秒
+    private volatile boolean stopBufferProcessing = false;
+    private final CountDownLatch bufferProcessingComplete = new CountDownLatch(1);
+    private final ConcurrentLinkedQueue<CompletableFuture<?>> pendingSnapshots = new ConcurrentLinkedQueue<>();
+
+    private static final String OVERFLOW_FILE_PREFIX = "redis_aof_overflow";
+    private static final String OVERFLOW_FILE_SUFFIX = ".tmp";
 
     /**
      * 构造函数：基于RedisCore接口的解耦架构
@@ -123,7 +269,8 @@ public class AofWriter implements Writer {
         this.isPreallocated = preallocated;
         this.redisCore = redisCore;
         this.allocator = PooledByteBufAllocator.DEFAULT;
-        this.rewriteBufferQueue = new LinkedBlockingDeque<>(DEFAULT_REWRITE_BUFFER_SIZE);
+        this.rewriteBufferQueue = new LinkedBlockingQueue<>(DEFAULT_REWRITE_BUFFER_SIZE);
+        this.overflowManager = new OverflowFileManager();
 
         try {
             if (channel == null) {
@@ -207,43 +354,31 @@ public class AofWriter implements Writer {
 
         ByteBuf bufferCopy = null;
         try {
-            // 1. 从池中分配ByteBuf
             bufferCopy = allocator.buffer(buffer.remaining());
-
-            // 2. 复制数据到ByteBuf（保持原buffer位置不变）
             int originalPosition = buffer.position();
             bufferCopy.writeBytes(buffer.duplicate());
             buffer.position(originalPosition);
 
-            // 3. 尝试添加到队列
-            if (tryOfferToRewriteQueue(bufferCopy)) {
-                bufferCopy = null; // 成功添加，转移所有权，不要释放
+            // 尝试放入队列，如果失败则写入溢出文件
+            if (!offerToQueue(bufferCopy)) {
+                // 转移所有权到溢出管理器
+                overflowManager.writeToOverflow(bufferCopy);
+                bufferCopy = null; // 防止被释放
             }
-
         } finally {
-            // 4.  使用ReferenceCountUtil安全释放
             ReferenceCountUtil.safeRelease(bufferCopy);
         }
     }
 
-    private boolean tryOfferToRewriteQueue(ByteBuf buffer) {
+    private boolean offerToQueue(ByteBuf buffer) {
         try {
-            if (rewriteBufferQueue.offer(buffer, 100, TimeUnit.MILLISECONDS)) {
-                return true; // 成功添加
-            } else {
-                log.warn("重写AOF文件的缓冲区已满，丢弃数据");
-                return false;
-            }
+            // 尝试放入队列，最多等待100ms
+            return rewriteBufferQueue.offer(buffer, 100, TimeUnit.MILLISECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            log.error("添加到重写缓冲区时被中断", e);
-            return false;
-        } catch (Exception e) {
-            log.error("添加到重写缓冲区时发生错误", e);
             return false;
         }
     }
-
 
     boolean isRewriting() {
         return rewriting.get();
@@ -273,8 +408,6 @@ public class AofWriter implements Writer {
         channel.force(true);
     }
 
-
-
     @Override
     public boolean bgrewrite() throws IOException {
         if (rewriting.get()) {
@@ -289,127 +422,203 @@ public class AofWriter implements Writer {
         }
 
         rewriting.set(true);
-        Thread rewriteThread = new Thread(this::rewriteTask);
+        Thread rewriteThread = new Thread(this::twoPhaseRewriteTask);
         rewriteThread.start();
         return true;
     }
 
-    private void rewriteTask() {
-        File rewriteFile = null;
-        RandomAccessFile rewriteRaf = null;
-        FileChannel rewriteChannel = null;
-
+    private void twoPhaseRewriteTask() {
+        File snapshotFile = null;  // 文件A：存储快照数据
+        File bufferFile = null;    // 文件B：存储重写期间的新命令
+        
         try {
-            log.info("开始重写aof");
-
-            // 1. 准备重写资源
-            RewriteResources resources = prepareRewriteResources();
-            rewriteFile = resources.file;
-            rewriteRaf = resources.raf;
-            rewriteChannel = resources.channel;
-
-            // 2. 执行重写操作
-            performRewrite(rewriteChannel);
-
-            // 3. 完成重写
-            finishRewrite(rewriteChannel, rewriteRaf, rewriteFile);
-            rewriteChannel = null;
-            rewriteRaf = null;
-
-            log.info("重写AOF文件完成");
-
-        } catch (IOException e) {
-            log.error("重写AOF文件时发生错误", e);
-            cleanupTempFile(rewriteFile);
+            // 第一阶段：准备工作
+            snapshotFile = File.createTempFile("redis_aof_snapshot", ".aof", file.getParentFile());
+            bufferFile = File.createTempFile("redis_aof_buffer", ".aof", file.getParentFile());
+            
+            // 触发异步快照，真正的异步，不等待
+            CompletableFuture<Map<Integer, Dict.DictSnapshot<RedisBytes, RedisData>>> snapshotsFuture = triggerAsyncSnapshot();
+            
+            // 启动缓冲区处理
+            CompletableFuture<Void> bufferWriteFuture = processRewriteBuffer(bufferFile);
+            
+            try {
+                // 等待快照完成
+                Map<Integer, Dict.DictSnapshot<RedisBytes, RedisData>> snapshots = 
+                    snapshotsFuture.get(30, TimeUnit.SECONDS);
+                
+                // 写入快照数据到文件A
+                writeSnapshotsToFile(snapshots, snapshotFile);
+                
+                // 通知缓冲区处理线程可以开始准备退出
+                stopBufferProcessing = true;
+                
+                // 等待缓冲区处理完成
+                if (!bufferProcessingComplete.await(BUFFER_DRAIN_TIMEOUT, TimeUnit.MILLISECONDS)) {
+                    throw new TimeoutException("等待缓冲区处理完成超时");
+                }
+                
+                // 等待缓冲区写入完成
+                bufferWriteFuture.get(5, TimeUnit.SECONDS);
+                
+                // 第三阶段：合并文件
+                mergeAndReplace(snapshotFile, bufferFile);
+                
+                log.info("AOF重写完成");
+            } catch (Exception e) {
+                // 取消所有未完成的快照
+                while (!pendingSnapshots.isEmpty()) {
+                    CompletableFuture<?> snapshot = pendingSnapshots.poll();
+                    if (snapshot != null) {
+                        snapshot.cancel(true);
+                    }
+                }
+                throw e;
+            }
+            
+        } catch (Exception e) {
+            log.error("AOF重写失败", e);
+            cleanupRewriteFiles(snapshotFile, bufferFile);
         } finally {
-            cleanupResources(rewriteChannel, rewriteRaf);
+            stopBufferProcessing = true;
+            rewriting.set(false);
+            clearRewriteBuffer();
+            bufferProcessingComplete.countDown(); // 确保不会死锁
         }
     }
 
-    private RewriteResources prepareRewriteResources() throws IOException {
-        File rewriteFile = File.createTempFile("redis_aof_temp", ".aof", file.getParentFile());
-        RandomAccessFile rewriteRaf = new RandomAccessFile(rewriteFile, "rw");
-        FileChannel rewriteChannel = rewriteRaf.getChannel();
-        rewriteChannel.position(0);
-
-        return new RewriteResources(rewriteFile, rewriteRaf, rewriteChannel);
+    private CompletableFuture<Map<Integer, Dict.DictSnapshot<RedisBytes, RedisData>>> triggerAsyncSnapshot() {
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                RedisDB[] dataBases = redisCore.getDataBases();
+                Map<Integer, Dict.DictSnapshot<RedisBytes, RedisData>> snapshots = new ConcurrentHashMap<>();
+                List<CompletableFuture<Void>> snapshotFutures = new ArrayList<>();
+                
+                // 为每个数据库并行触发快照
+                for (RedisDB db : dataBases) {
+                    if (db != null && db.size() > 0) {
+                        CompletableFuture<Void> future = db.getData().createAofSnapshot()
+                            .thenAccept(snapshot -> {
+                                if (snapshot != null) {
+                                    snapshots.put(db.getId(), snapshot);
+                                }
+                            });
+                        snapshotFutures.add(future);
+                        pendingSnapshots.offer(future);
+                    }
+                }
+                
+                // 等待所有快照完成
+                CompletableFuture.allOf(snapshotFutures.toArray(new CompletableFuture[0]))
+                    .get(SNAPSHOT_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+                
+                return snapshots;
+            } catch (Exception e) {
+                throw new CompletionException("创建数据库快照失败", e);
+            }
+        });
     }
 
-    private void performRewrite(FileChannel rewriteChannel) throws IOException {
-        // 重写数据库内容
-        rewriteDatabases(rewriteChannel);
-
-        // 应用重写缓冲区
-        log.info("开始缓冲区的重写");
-        applyRewriteBuffer(rewriteChannel);
+    private CompletableFuture<Void> processRewriteBuffer(File bufferFile) {
+        return CompletableFuture.runAsync(() -> {
+            try (RandomAccessFile raf = new RandomAccessFile(bufferFile, "rw");
+                 FileChannel channel = raf.getChannel()) {
+                
+                while (!stopBufferProcessing || !rewriteBufferQueue.isEmpty()) {
+                    ByteBuf buf = rewriteBufferQueue.poll(100, TimeUnit.MILLISECONDS);
+                    if (buf != null) {
+                        try {
+                            ByteBuffer nioBuffer = buf.nioBuffer();
+                            writtenFullyTo(channel, nioBuffer);
+                        } finally {
+                            ReferenceCountUtil.safeRelease(buf);
+                        }
+                    }
+                }
+                
+                channel.force(true);
+                bufferProcessingComplete.countDown();
+            } catch (Exception e) {
+                bufferProcessingComplete.countDown(); // 确保在异常情况下也会释放锁
+                throw new CompletionException("处理重写缓冲区失败", e);
+            }
+        });
     }
 
-    private void rewriteDatabases(FileChannel rewriteChannel) throws IOException {
-        final RedisDB[] dataBases = redisCore.getDataBases();
-        for (int i = 0; i < dataBases.length; i++) {
-            final RedisDB db = dataBases[i];
-            if (db.size() > 0) {
-                log.info("正在重写数据库{}", i);
-                writeSelectCommand(i, rewriteChannel);
-                writeDatabaseToAof(db, rewriteChannel);
+    private void writeSnapshotsToFile(Map<Integer, Dict.DictSnapshot<RedisBytes, RedisData>> snapshots, 
+                                    File snapshotFile) throws IOException {
+        try (RandomAccessFile raf = new RandomAccessFile(snapshotFile, "rw");
+             FileChannel channel = raf.getChannel()) {
+            
+            // 按数据库ID排序处理
+            List<Integer> dbIds = new ArrayList<>(snapshots.keySet());
+            Collections.sort(dbIds);
+            
+            for (Integer dbId : dbIds) {
+                Dict.DictSnapshot<RedisBytes, RedisData> snapshot = snapshots.get(dbId);
+                if (snapshot != null) {
+                    // 写入SELECT命令
+                    writeSelectCommand(dbId, channel);
+                    
+                    // 批量写入数据
+                    List<Map.Entry<RedisBytes, RedisData>> batch = new ArrayList<>(1000);
+                    for (Map.Entry<RedisBytes, RedisData> entry : snapshot) {
+                        batch.add(entry);
+                        if (batch.size() >= 1000) {
+                            writeBatchToAof(batch, channel);
+                            batch.clear();
+                        }
+                    }
+                    
+                    if (!batch.isEmpty()) {
+                        writeBatchToAof(batch, channel);
+                    }
+                }
+            }
+            
+            channel.force(true);
+        }
+    }
+
+    private void mergeAndReplace(File snapshotFile, File bufferFile) throws IOException {
+        File mergedFile = File.createTempFile("redis_aof_merged", ".aof", file.getParentFile());
+        
+        try {
+            try (FileChannel targetChannel = new RandomAccessFile(mergedFile, "rw").getChannel();
+                 FileChannel snapshotChannel = new RandomAccessFile(snapshotFile, "r").getChannel();
+                 FileChannel bufferChannel = new RandomAccessFile(bufferFile, "r").getChannel()) {
+                
+                // 1. 复制快照文件内容
+                snapshotChannel.transferTo(0, snapshotChannel.size(), targetChannel);
+                
+                // 2. 复制缓冲区文件内容
+                bufferChannel.transferTo(0, bufferChannel.size(), targetChannel);
+                
+                // 3. 合并溢出文件内容
+                overflowManager.mergeOverflowFiles(targetChannel);
+                
+                targetChannel.force(true);
+            }
+            
+            // 替换原文件
+            replaceAofFile(mergedFile);
+            
+        } finally {
+            cleanupRewriteFiles(snapshotFile, bufferFile);
+            if (mergedFile != null && mergedFile.exists()) {
+                mergedFile.delete();
             }
         }
     }
 
-    private void finishRewrite(FileChannel rewriteChannel, RandomAccessFile rewriteRaf, File rewriteFile) throws IOException {
-        rewriteChannel.force(true);
-        closeRewriteResources(rewriteChannel, rewriteRaf);
-        replaceAofFile(rewriteFile);
-    }
-
-    private void cleanupTempFile(File rewriteFile) {
-        if (rewriteFile != null && rewriteFile.exists()) {
-            try {
-                Files.delete(rewriteFile.toPath());
-                log.info("已删除临时重写文件: {}", rewriteFile.getAbsolutePath());
-            } catch (IOException deleteEx) {
-                log.warn("删除临时重写文件失败: {}", deleteEx.getMessage());
-            }
-        }
-    }
-
-    private void cleanupResources(FileChannel rewriteChannel, RandomAccessFile rewriteRaf) {
-        closeRewriteResources(rewriteChannel, rewriteRaf);
-        rewriteBufferQueue.clear();
-        rewriting.compareAndSet(true, false);
-    }
-
-    // 内部类用于封装重写资源
-    private static class RewriteResources {
-        final File file;
-        final RandomAccessFile raf;
-        final FileChannel channel;
-
-        RewriteResources(File file, RandomAccessFile raf, FileChannel channel) {
-            this.file = file;
-            this.raf = raf;
-            this.channel = channel;
-        }
-    }
-
-    /**
-     * 安全关闭重写相关资源
-     */
-    private void closeRewriteResources(final FileChannel rewriteChannel,
-                                       final RandomAccessFile rewriteRaf) {
-        if (rewriteChannel != null) {
-            try {
-                rewriteChannel.close();
-            } catch (IOException e) {
-                log.warn("关闭重写FileChannel时发生错误: {}", e.getMessage());
-            }
-        }
-
-        if (rewriteRaf != null) {
-            try {
-                rewriteRaf.close();
-            } catch (IOException e) {
-                log.warn("关闭重写RandomAccessFile时发生错误: {}", e.getMessage());
+    private void cleanupRewriteFiles(File... files) {
+        for (File file : files) {
+            if (file != null && file.exists()) {
+                try {
+                    file.delete();
+                } catch (Exception e) {
+                    log.warn("清理临时文件失败: " + file.getAbsolutePath(), e);
+                }
             }
         }
     }
@@ -576,27 +785,36 @@ public class AofWriter implements Writer {
         }
     }
 
-    private void writeDatabaseToAof(RedisDB db, FileChannel channel) {
+    private void writeDatabaseToAof(RedisDB db, FileChannel channel) throws IOException {
         Dict<RedisBytes, RedisData> data = db.getData();
 
-        // 1. 使用线程安全的快照避免并发问题
-        Dict.DictSnapshot<RedisBytes, RedisData> snapshot = data.createSnapshot();
-        List<Map.Entry<RedisBytes, RedisData>> batch = new ArrayList<>(1000);
-        int batchSize = 1000;
+        try {
+            // 等待快照创建完成
+            Dict.DictSnapshot<RedisBytes, RedisData> snapshot = data.createAofSnapshot()
+                .get(SNAPSHOT_TIMEOUT_MS, TimeUnit.MILLISECONDS);
 
-        // 2. 分批处理快照数据
-        for (Map.Entry<RedisBytes, RedisData> entry : snapshot) {
-            batch.add(entry);
-            if (batch.size() >= batchSize) {
+            List<Map.Entry<RedisBytes, RedisData>> batch = new ArrayList<>(1000);
+            int batchSize = 1000;
+
+            // 分批处理快照数据
+            for (Map.Entry<RedisBytes, RedisData> entry : snapshot) {
+                batch.add(entry);
+                if (batch.size() >= batchSize) {
+                    writeBatchToAof(batch, channel);
+                    batch.clear();
+                }
+            }
+
+            // 处理剩余数据
+            if (!batch.isEmpty()) {
                 writeBatchToAof(batch, channel);
                 batch.clear();
             }
-        }
-
-        // 3. 处理剩余数据
-        if (!batch.isEmpty()) {
-            writeBatchToAof(batch, channel);
-            batch.clear();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("AOF重写过程中被中断", e);
+        } catch (ExecutionException | TimeoutException e) {
+            throw new IOException("AOF重写过程中创建快照失败", e);
         }
     }
 
@@ -737,6 +955,8 @@ public class AofWriter implements Writer {
             throw new IOException("关闭AOF文件时被中断", e);
         } catch (Exception e) {
             throw new IOException("关闭AOF文件时发生错误", e);
+        } finally {
+            overflowManager.close();
         }
     }
     private void waitForRewriteCompletion() throws InterruptedException {
