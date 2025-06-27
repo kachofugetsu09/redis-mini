@@ -580,12 +580,12 @@ public class AofWriter implements Writer {
         Dict<RedisBytes, RedisData> data = db.getData();
 
         // 1. 使用线程安全的快照避免并发问题
-        Map<RedisBytes, RedisData> snapshot = data.createSafeSnapshot();
+        Dict.DictSnapshot<RedisBytes, RedisData> snapshot = data.createSnapshot();
         List<Map.Entry<RedisBytes, RedisData>> batch = new ArrayList<>(1000);
         int batchSize = 1000;
 
         // 2. 分批处理快照数据
-        for (Map.Entry<RedisBytes, RedisData> entry : snapshot.entrySet()) {
+        for (Map.Entry<RedisBytes, RedisData> entry : snapshot) {
             batch.add(entry);
             if (batch.size() >= batchSize) {
                 writeBatchToAof(batch, channel);

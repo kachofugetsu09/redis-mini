@@ -131,7 +131,7 @@ class RdbWriterTest {
 
             // 创建Mock字典
             Dict<RedisBytes, RedisData> mockDict = mock(Dict.class);
-            when(mockDict.createSafeSnapshot()).thenReturn(testData);
+            when(mockDict.createSnapshot().toMap()).thenReturn(testData);
 
             // 设置Mock数据库
             when(mockRedisDB.getId()).thenReturn(0);
@@ -213,7 +213,7 @@ class RdbWriterTest {
             testData.put(testKey, testValue);
 
             Dict<RedisBytes, RedisData> mockDict = mock(Dict.class);
-            when(mockDict.createSafeSnapshot()).thenReturn(testData);
+            when(mockDict.createSnapshot().toMap()).thenReturn(testData);
 
             when(mockRedisDB.getId()).thenReturn(0);
             when(mockRedisDB.size()).thenReturn(1L);
@@ -297,7 +297,7 @@ class RdbWriterTest {
         @SuppressWarnings("unchecked")
         private void setupDatabaseWithData(Map<RedisBytes, RedisData> testData) {
             Dict<RedisBytes, RedisData> mockDict = mock(Dict.class);
-            when(mockDict.createSafeSnapshot()).thenReturn(testData);
+            when(mockDict.createSnapshot().toMap()).thenReturn(testData);
 
             when(mockRedisDB.getId()).thenReturn(0);
             when(mockRedisDB.size()).thenReturn((long) testData.size());

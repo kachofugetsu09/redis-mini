@@ -291,8 +291,8 @@ public class RdbUtils {
         writeLength(dos, (int) hash.size());
 
         // 使用线程安全的快照避免并发问题
-        Map<RedisBytes, RedisBytes> snapshot = hash.createSafeSnapshot();
-        for (Map.Entry<RedisBytes, RedisBytes> entry : snapshot.entrySet()) {
+        Dict.DictSnapshot<RedisBytes, RedisBytes> snapshot = hash.createSnapshot();
+        for (Map.Entry<RedisBytes, RedisBytes> entry : snapshot) {
             writeString(dos, entry.getKey().getBytesUnsafe());
             writeString(dos, entry.getValue().getBytesUnsafe());
         }

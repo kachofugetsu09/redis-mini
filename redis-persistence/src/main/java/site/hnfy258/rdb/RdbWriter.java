@@ -4,6 +4,7 @@ import lombok.extern.slf4j.Slf4j;
 import site.hnfy258.core.RedisCore;
 import site.hnfy258.database.RedisDB;
 import site.hnfy258.datastructure.*;
+import site.hnfy258.internal.Dict;
 import site.hnfy258.rdb.crc.Crc64OutputStream;
 
 import java.io.*;
@@ -175,7 +176,7 @@ public class RdbWriter {
         for (final RedisDB db : databases) {
             if (db != null && db.size() > 0 && db.getData() != null) {
                 // 创建数据库快照（已经是线程安全的）
-                final Map<RedisBytes, RedisData> snapshot = db.getData().createSafeSnapshot();
+                final Map<RedisBytes, RedisData> snapshot = db.getData().createSnapshot().toMap();
                 if (snapshot != null) {
                     snapshots.put(db.getId(), snapshot);
                     log.debug("创建数据库{}快照，包含{}个键", db.getId(), snapshot.size());
@@ -257,8 +258,8 @@ public class RdbWriter {
         RdbUtils.writeSelectDB(dos, databaseId);
         
         //2.写数据库数据 - 使用线程安全的快照
-        Map<RedisBytes, RedisData> snapshot = db.getData().createSafeSnapshot();
-        for (Map.Entry<RedisBytes, RedisData> entry : snapshot.entrySet()) {
+        Dict.DictSnapshot<RedisBytes, RedisData> snapshot = db.getData().createSnapshot();
+        for (Map.Entry<RedisBytes, RedisData> entry : snapshot) {
             RedisBytes key = entry.getKey();
             RedisData value = entry.getValue();
             rdbSaveObject(dos, key, value);
