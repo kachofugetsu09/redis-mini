@@ -140,15 +140,13 @@ public class AofBatchWriter implements AutoCloseable {
      * 执行实际的刷盘操作
      */
     private void performFlush() {
-        // 在 EVERYSEC 模式下，这个方法只会被 scheduledFlushTask 调用，并已在其中处理 CAS
-        // 为了兼容 writeBatch 和 write 中的直接调用（如果是 ALWAYS 模式），这里保留逻辑
         try {
             writer.flush();
             lastFlushTime = System.currentTimeMillis();
             log.debug("AOF刷盘完成");
         } catch (Exception e) {
             log.error("AOF刷盘失败", e);
-            throw new RuntimeException("刷盘失败", e); // 抛出异常让上层处理
+            throw new RuntimeException("刷盘失败", e);
         }
     }
 
@@ -309,8 +307,8 @@ public class AofBatchWriter implements AutoCloseable {
             // 根据 AOF 刷盘策略决定是否立即刷盘或标记待刷盘
             if (syncPolicy == AofSyncPolicy.ALWAYS) {
                 performFlush(); // ALWAYS 模式直接刷盘
-            } else if (syncPolicy == AofSyncPolicy.EVERYSEC) { // EVERYSEC模式：标记有待刷盘数据
-                hasPendingFlush.set(true);
+            } else if (syncPolicy == AofSyncPolicy.EVERYSEC) {
+                hasPendingFlush.set(true); // EVERYSEC模式：标记有待刷盘数据
             }
             // NO 模式下不主动刷盘
         } catch (Exception e) {
@@ -380,7 +378,13 @@ public class AofBatchWriter implements AutoCloseable {
 
 
     public void flush() throws IOException {
-        writer.flush();
+        // 在 EVERYSEC 模式下，只需要标记有待刷盘数据
+        if (syncPolicy == AofSyncPolicy.EVERYSEC) {
+            hasPendingFlush.set(true);
+        } else {
+            // 在 ALWAYS 模式下，立即执行刷盘
+            performFlush();
+        }
     }
 
 
@@ -427,11 +431,13 @@ public class AofBatchWriter implements AutoCloseable {
             // 5. 执行最后的刷盘
             try {
                 if (writer != null) {
+                    log.info("执行最后一次刷盘...");
                     writer.flush(); // 强制刷盘，确保所有数据都落盘
-                    log.info("执行最后的刷盘完成");
+                    log.info("最后一次刷盘完成");
                 }
             } catch (Exception e) {
                 log.error("最后刷盘时发生错误", e);
+                throw e;
             }
 
             log.info("AofBatchWriter 关闭完成");

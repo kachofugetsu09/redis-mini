@@ -190,6 +190,9 @@ public class RedisMiniServer implements RedisServer, ReplicationHost {
         try {
             serverChannel = serverBootstrap.bind(config.getHost(), config.getPort()).sync().channel();
             log.info("Redis server started at {}:{}", config.getHost(), config.getPort());
+            
+            // 启动Redis上下文
+            redisContext.startup();
         } catch (InterruptedException e) {
             log.error("Redis server start error", e);
             stop();
@@ -219,28 +222,49 @@ public class RedisMiniServer implements RedisServer, ReplicationHost {
      */
     @Override
     public void stop() {
+        log.info("\n开始关闭Redis服务器...");
         try {
-            if(serverChannel != null) {
-                serverChannel.close().sync();
+            // 1. 先关闭持久化系统，确保数据安全
+            if(redisContext != null) {
+                log.info("正在关闭Redis上下文...");
+                redisContext.shutdown();
+                log.info("Redis上下文已关闭");
             }
+
+            // 2. 关闭命令执行器
+            if(commandExecutor != null) {
+                log.info("正在关闭命令执行器...");
+                commandExecutor.shutdown();
+                log.info("命令执行器已关闭");
+            }
+
+            // 3. 关闭网络连接
+            if(serverChannel != null) {
+                log.info("正在关闭服务器通道...");
+                serverChannel.close().sync();
+                log.info("服务器通道已关闭");
+            }
+
+            // 4. 关闭线程池
             if(workerGroup != null) {
+                log.info("正在关闭工作线程组...");
                 workerGroup.shutdownGracefully().sync();
+                log.info("工作线程组已关闭");
             }
             if(bossGroup != null) {
+                log.info("正在关闭主线程组...");
                 bossGroup.shutdownGracefully().sync();
+                log.info("主线程组已关闭");
             }
-            if(commandExecutor != null) {
-                commandExecutor.shutdown();
-            }
-            if(redisContext != null) {
-                redisContext.shutdown();
-            }
+
+            log.info("Redis服务器已完全关闭");
+            
         } catch(InterruptedException e) {
-            log.error("Redis server stop error", e);
+            System.err.println("Redis服务器关闭过程被中断: " + e.getMessage());
             Thread.currentThread().interrupt();
         } catch (Exception e) {
-            log.error("Redis server stop error", e);
-            throw new RuntimeException(e);
+            System.err.println("Redis服务器关闭时发生错误: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 

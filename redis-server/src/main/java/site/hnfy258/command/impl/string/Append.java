@@ -49,7 +49,8 @@ public class Append implements Command {
 
     @Override
     public Resp handle() {
-        RedisData data = redisContext.get(key);        if (data == null) {
+        RedisData data = redisContext.get(key);
+        if (data == null) {
             // 键不存在，创建新的RedisString
             Sds sds = Sds.create(value.getBytes());
             redisContext.put(key, new RedisString(sds));
@@ -59,13 +60,16 @@ public class Append implements Command {
         if (!(data instanceof RedisString)) {
             throw new IllegalStateException("WRONGTYPE Operation against a key holding the wrong kind of value");
         }
-          RedisString redisString = (RedisString) data;
         
-        // 使用SDS的高效append操作
-        redisString.getSds().append(value.getBytes());
+        RedisString redisString = (RedisString) data;
         
-        // 返回追加后的总长度 - SDS的O(1)长度获取
-        return RespInteger.valueOf(redisString.getSds().length());
+        // 由于Sds是不可变的，我们需要创建一个新的Sds实例
+        Sds newSds = redisString.getSds().append(value.getBytes());
+        // 更新RedisString中的Sds
+        redisString.setSds(newSds);
+        
+        // 返回追加后的总长度
+        return RespInteger.valueOf(newSds.length());
     }
 
     @Override

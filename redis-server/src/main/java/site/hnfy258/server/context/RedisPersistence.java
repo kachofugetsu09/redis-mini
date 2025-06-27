@@ -519,8 +519,12 @@ public class RedisPersistence {
      * </ul>
      */
     public void shutdown() {
-        if (aofEnabled) {
+        log.info("开始关闭持久化系统...");
+        
+        // 关闭AOF持久化
+        if (aofManager != null) {
             try {
+                log.info("正在关闭AOF管理器...");
                 aofManager.close();
                 log.info("AOF管理器已关闭");
             } catch (Exception e) {
@@ -528,8 +532,10 @@ public class RedisPersistence {
             }
         }
         
-        if (rdbEnabled) {
+        // 关闭RDB持久化
+        if (rdbManager != null) {
             try {
+                log.info("正在关闭RDB管理器...");
                 rdbManager.close();
                 log.info("RDB管理器已关闭");
             } catch (Exception e) {
@@ -537,6 +543,6 @@ public class RedisPersistence {
             }
         }
         
-        log.info("持久化系统已关闭");
+        log.info("持久化系统关闭完成");
     }
 }

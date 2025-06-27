@@ -118,23 +118,22 @@ public class AofWriter implements Writer {
      * @throws FileNotFoundException 文件未找到异常
      */
     public AofWriter(File file, boolean preallocated, int flushInterval,
-                     FileChannel channel, RedisCore redisCore) throws FileNotFoundException {
+                     FileChannel channel, RedisCore redisCore) throws IOException {
         this.file = file;
         this.isPreallocated = preallocated;
         this.redisCore = redisCore;
         this.allocator = PooledByteBufAllocator.DEFAULT;
         this.rewriteBufferQueue = new LinkedBlockingDeque<>(DEFAULT_REWRITE_BUFFER_SIZE);
 
-        if (channel == null) {
-            this.raf = new RandomAccessFile(file, "rw");
-            this.channel = raf.getChannel();
-            channel = this.channel;
-        } else {
-            this.channel = channel;
-        }
-
         try {
-            this.realSize = new AtomicLong(channel.size());
+            if (channel == null) {
+                this.raf = new RandomAccessFile(file, "rw");
+                this.channel = this.raf.getChannel();
+            } else {
+                this.channel = channel;
+            }
+
+            this.realSize = new AtomicLong(this.channel.size());
 
             if (isPreallocated) {
                 preAllocated(DEFAULT_PREALLOCATE_SIZE);
@@ -142,17 +141,22 @@ public class AofWriter implements Writer {
 
             this.channel.position(this.realSize.get());
         } catch (IOException e) {
+            // 确保资源被正确清理
+            closeQuietly(this.channel);
+            closeQuietly(this.raf);
+            this.channel = null;
+            this.raf = null;
+            throw new IOException("初始化AOF Writer时发生错误", e);
+        }
+    }
+
+    private void closeQuietly(Closeable resource) {
+        if (resource != null) {
             try {
-                if (this.channel != null) {
-                    this.channel.close();
-                }
-                if (this.raf != null) {
-                    this.raf.close();
-                }
-            } catch (IOException ex) {
-                log.error("初始化关闭文件时发生错误", ex);
+                resource.close();
+            } catch (IOException e) {
+                log.warn("关闭资源时发生错误", e);
             }
-            throw new RuntimeException(e);
         }
     }
 
@@ -189,6 +193,9 @@ public class AofWriter implements Writer {
         if (isRewriting()) {
             copyToRewriteBuffer(buffer);
         }
+
+        // 3. 确保数据写入磁盘
+        channel.force(false);
 
         return written;
     }
@@ -421,6 +428,7 @@ public class AofWriter implements Writer {
 
             // 2. 执行文件替换操作
             performFileReplacement(rewriteFile);
+            this.realSize.set(file.length());
 
             // 3. 重新打开文件
             reopenFile();
@@ -495,14 +503,22 @@ public class AofWriter implements Writer {
         if (fileChannel != null && fileChannel.isOpen()) {
             try {
                 // 1. 执行关闭前最后一次刷盘
-                log.debug("执行关闭前最后一次刷盘");
+                log.info("执行关闭前最后一次刷盘");
                 fileChannel.force(true);
 
                 // 2. 截断文件到实际大小
                 final long currentSize = realSize.get();
-                if (currentSize > 0) {
-                    fileChannel.truncate(currentSize);
-                    log.debug("AOF文件已截断到长度{}", currentSize);
+                if (currentSize >= 0) { // 确保大小非负
+                    // 显式处理文件逻辑大小为0的情况，强制物理截断为0
+                    if (currentSize == 0 && randomAccessFile != null) {
+                        randomAccessFile.setLength(0); // 直接将物理文件大小设置为0
+                        log.info("AOF文件已截断到长度{} (物理截断为0)", currentSize); // 使用 info 级别日志
+                    } else if (currentSize > 0) { // 正常截断到实际数据长度
+                        fileChannel.truncate(currentSize);
+                        log.info("AOF文件已截断到长度{}", currentSize); // 使用 info 级别日志
+                    }
+                } else {
+                    log.warn("尝试截断到无效的负数长度: {}", currentSize);
                 }
 
                 // 3. 关闭FileChannel
@@ -635,26 +651,91 @@ public class AofWriter implements Writer {
 
     @Override
     public void close() throws IOException {
+        log.info("开始关闭 AOF Writer...");
+        
+        // 如果已经关闭，直接返回
+        if (channel == null && raf == null) {
+            log.info("AOF Writer 已经关闭");
+            return;
+        }
+
         try {
             // 1. 等待重写任务完成
             waitForRewriteCompletion();
 
-            // 2. 清理重写缓冲区 - 使用ReferenceCountUtil
+            // 2. 清理重写缓冲区
             clearRewriteBuffer();
 
-            // 3. 关闭文件资源
-            closeFileResources(this.channel, this.raf);
-            this.channel = null;
-            this.raf = null;
+            // 3. 执行最后一次刷盘（如果channel还打开）
+            if (channel != null && channel.isOpen()) {
+                try {
+                    log.info("执行最后一次刷盘，当前位置: {}", channel.position());
+                    channel.force(true);
+                } catch (IOException e) {
+                    log.warn("最后一次刷盘时发生错误", e);
+                    // 继续执行关闭流程
+                }
+            }
 
-            log.debug("AOF Writer 已成功关闭");
+            // 4. 截断文件到实际大小（如果channel和raf还打开）
+            final long currentSize = realSize.get();
+            if (currentSize >= 0 && channel != null && channel.isOpen() && raf != null) {
+                try {
+                    if (currentSize == 0) {
+                        log.info("AOF文件为空，执行物理截断");
+                        raf.setLength(0);
+                    } else {
+                        log.info("截断AOF文件到实际大小: {}", currentSize);
+                        channel.truncate(currentSize);
+                    }
+                    // 再次强制刷盘确保截断生效
+                    channel.force(true);
+                } catch (IOException e) {
+                    log.warn("截断文件时发生错误", e);
+                    // 继续执行关闭流程
+                }
+            }
+
+            // 5. 关闭文件资源（按照正确的顺序：先channel后raf）
+            IOException closeException = null;
+            
+            if (channel != null) {
+                try {
+                    if (channel.isOpen()) {
+                        channel.close();
+                    }
+                } catch (IOException e) {
+                    closeException = e;
+                    log.warn("关闭channel时发生错误", e);
+                } finally {
+                    channel = null;
+                }
+            }
+
+            if (raf != null) {
+                try {
+                    raf.close();
+                } catch (IOException e) {
+                    if (closeException == null) {
+                        closeException = e;
+                    }
+                    log.warn("关闭RandomAccessFile时发生错误", e);
+                } finally {
+                    raf = null;
+                }
+            }
+
+            log.info("AOF Writer 已成功关闭");
+
+            // 如果有异常发生，抛出最后捕获的异常
+            if (closeException != null) {
+                throw new IOException("关闭AOF文件时发生错误", closeException);
+            }
 
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            log.error("关闭AOF文件时被中断", e);
             throw new IOException("关闭AOF文件时被中断", e);
         } catch (Exception e) {
-            log.error("关闭AOF文件时发生错误", e);
             throw new IOException("关闭AOF文件时发生错误", e);
         }
     }

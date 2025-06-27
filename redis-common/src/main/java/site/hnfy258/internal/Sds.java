@@ -209,7 +209,8 @@ public abstract class Sds {
      */
     private static final class Sds8 extends Sds {
         private byte len;
-        private byte alloc;        public Sds8(final byte[] bytes) {
+        private byte alloc;
+        public Sds8(final byte[] bytes) {
             this.len = (byte) bytes.length;
             final int allocSize = calculateAllocConservative(bytes.length);
             // 1. 确保分配大小不超过类型限制，如果超过则使用最大值
@@ -243,28 +244,24 @@ public abstract class Sds {
 
         @Override
         public Sds append(final byte[] extra) {
-            final int newLen = length() + extra.length;
-
-            // 检查是否需要升级类型
-            if (newLen >= 256) {
-                final Sds16 newSds = new Sds16(getBytes());
-                return newSds.append(extra);
-            }            if (newLen > alloc()) {
-                final int newAlloc = calculateAllocConservative(newLen);
-                if (newAlloc > 255) {
-                    final Sds16 newSds = new Sds16(getBytes());
-                    return newSds.append(extra);
-                }
-
-                final byte[] newBytes = new byte[newAlloc];
-                System.arraycopy(bytes, 0, newBytes, 0, length());
-                bytes = newBytes;
-                this.alloc = (byte) newAlloc;
+            // 如果追加内容为空，则无需修改，直接返回当前实例
+            if (extra.length == 0) {
+                return this;
             }
 
-            System.arraycopy(extra, 0, bytes, length(), extra.length);
-            setLength(newLen);
-            return this;
+            final int currentLen = length();
+            final int newLen = currentLen + extra.length;
+
+            // 创建一个新的字节数组，用于存放合并后的内容
+            final byte[] combinedBytes = new byte[newLen];
+
+            // 将当前 Sds 的内容复制到新数组
+            System.arraycopy(this.bytes, 0, combinedBytes, 0, currentLen);
+
+            // 将要追加的内容复制到新数组
+            System.arraycopy(extra, 0, combinedBytes, currentLen, extra.length);
+
+            return Sds.create(combinedBytes);
         }
     }
 
@@ -273,7 +270,8 @@ public abstract class Sds {
      */
     private static final class Sds16 extends Sds {
         private short len;
-        private short alloc;        public Sds16(final byte[] bytes) {
+        private short alloc;
+        public Sds16(final byte[] bytes) {
             this.len = (short) bytes.length;
             final int allocSize = calculateAllocConservative(bytes.length);
             // 1. 确保分配大小不超过类型限制，如果超过则使用最大值
@@ -307,27 +305,24 @@ public abstract class Sds {
 
         @Override
         public Sds append(final byte[] extra) {
-            final int newLen = length() + extra.length;
-
-            if (newLen >= 65536) {
-                final Sds32 newSds = new Sds32(getBytes());
-                return newSds.append(extra);
-            }            if (newLen > alloc()) {
-                final int newAlloc = calculateAllocConservative(newLen);
-                if (newAlloc > 65535) {
-                    final Sds32 newSds = new Sds32(getBytes());
-                    return newSds.append(extra);
-                }
-
-                final byte[] newBytes = new byte[newAlloc];
-                System.arraycopy(bytes, 0, newBytes, 0, length());
-                bytes = newBytes;
-                this.alloc = (short) newAlloc;
+            // 如果追加内容为空，则无需修改，直接返回当前实例
+            if (extra.length == 0) {
+                return this;
             }
 
-            System.arraycopy(extra, 0, bytes, length(), extra.length);
-            setLength(newLen);
-            return this;
+            final int currentLen = length();
+            final int newLen = currentLen + extra.length;
+
+            // 创建一个新的字节数组，用于存放合并后的内容
+            final byte[] combinedBytes = new byte[newLen];
+
+            // 将当前 Sds 的内容复制到新数组
+            System.arraycopy(this.bytes, 0, combinedBytes, 0, currentLen);
+
+            // 将要追加的内容复制到新数组
+            System.arraycopy(extra, 0, combinedBytes, currentLen, extra.length);
+
+            return Sds.create(combinedBytes);
         }
     }
 
@@ -361,20 +356,27 @@ public abstract class Sds {
         @Override
         public void clear() {
             this.len = 0;
-        }        @Override
+        }
+        @Override
         public Sds append(final byte[] extra) {
-            final int newLen = len + extra.length;
-            if (newLen > this.alloc) {
-                final int newAlloc = calculateAllocConservative(newLen);
-                final byte[] newBytes = new byte[newAlloc];
-                System.arraycopy(bytes, 0, newBytes, 0, len);
-                bytes = newBytes;
-                this.alloc = newAlloc;
+            // 如果追加内容为空，则无需修改，直接返回当前实例
+            if (extra.length == 0) {
+                return this;
             }
 
-            System.arraycopy(extra, 0, bytes, len, extra.length);
-            this.len = newLen;
-            return this;
+            final int currentLen = length();
+            final int newLen = currentLen + extra.length;
+
+            // 创建一个新的字节数组，用于存放合并后的内容
+            final byte[] combinedBytes = new byte[newLen];
+
+            // 将当前 Sds 的内容复制到新数组
+            System.arraycopy(this.bytes, 0, combinedBytes, 0, currentLen);
+
+            // 将要追加的内容复制到新数组
+            System.arraycopy(extra, 0, combinedBytes, currentLen, extra.length);
+
+            return Sds.create(combinedBytes);
         }
     }
 }

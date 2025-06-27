@@ -297,12 +297,19 @@ public class RedisContextImpl implements RedisContext {
       @Override
     public void shutdown() {
         if (running.compareAndSet(true, false)) {
-            log.info("RedisContext关闭中...");
+            System.out.println("开始关闭Redis上下文...");
             
             // 1. 关闭持久化组件
-            persistence.shutdown();
+            try {
+                System.out.println("正在关闭持久化系统...");
+                persistence.shutdown();
+                System.out.println("持久化系统已关闭");
+            } catch (Exception e) {
+                System.err.println("关闭持久化系统时发生错误: " + e.getMessage());
+                e.printStackTrace();
+            }
             
-            log.info("RedisContext关闭完成");
+            System.out.println("Redis上下文关闭完成");
         }
     }
     

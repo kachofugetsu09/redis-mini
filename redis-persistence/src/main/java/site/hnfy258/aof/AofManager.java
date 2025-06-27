@@ -135,6 +135,8 @@ public class AofManager {
             try {
                 batchWriter.write(byteBuf);
                 committedToBatchWriter = true;
+                // 确保数据被写入
+                batchWriter.flush();
             } finally {
                 writeLock.unlock();
             }
@@ -207,6 +209,8 @@ public class AofManager {
             try {
                 batchWriter.write(byteBuf);
                 committedToBatchWriter = true;
+                // 确保数据被写入
+                batchWriter.flush();
             } finally {
                 writeLock.unlock();
             }
@@ -243,12 +247,23 @@ public class AofManager {
      * 按照正确的顺序关闭各个组件，确保资源完全释放
      */
     public void close() throws Exception {
-        log.debug("开始关闭AOF管理器...");
+        log.info("开始关闭AOF管理器...");
         
         Exception firstException = null;
         
         try {
-            // 1. 先关闭批量写入器，停止接收新的写入请求
+            // 1. 先执行最后一次刷盘
+            try {
+                log.info("执行最后一次AOF刷盘...");
+                flushBuffer();
+            } catch (Exception e) {
+                log.error("最后一次AOF刷盘失败", e);
+                if (firstException == null) {
+                    firstException = e;
+                }
+            }
+            
+            // 2. 先关闭批量写入器，停止接收新的写入请求
             if (batchWriter != null) {
                 try {
                     log.info("正在关闭批量写入器...");
@@ -263,7 +278,7 @@ public class AofManager {
                 }
             }
             
-            // 2. 再关闭AOF写入器
+            // 3. 再关闭AOF写入器
             if (aofWriter != null) {
                 try {
                     log.info("正在关闭AOF写入器...");
@@ -278,7 +293,7 @@ public class AofManager {
                 }
             }
             
-            // 3. 最后关闭AOF加载器
+            // 4. 最后关闭AOF加载器
             if (aofLoader != null) {
                 try {
                     log.info("正在关闭AOF加载器...");

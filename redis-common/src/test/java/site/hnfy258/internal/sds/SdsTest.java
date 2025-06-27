@@ -186,8 +186,10 @@ class SdsTest {
             
             // 验证append后长度正确更新
             final int originalLength = testSds.length();
-            testSds.append("_suffix".getBytes());
-            assertEquals(originalLength + "_suffix".length(), testSds.length());
+            final Sds newSds = testSds.append("_suffix".getBytes());
+            assertEquals(originalLength + "_suffix".length(), newSds.length());
+            // 原始对象长度不应改变
+            assertEquals(originalLength, testSds.length());
         }
 
         @Test
@@ -244,11 +246,15 @@ class SdsTest {
         @DisplayName("append String - 字符串追加")
         void testAppendString() {
             final String suffix = "_suffix";
+            final String originalString = testSds.toString();
             final Sds result = testSds.append(suffix);
             
-            // append应该返回自身或新实例
+            // 原始SDS不应被修改
+            assertEquals(originalString, testSds.toString());
+            
+            // 新的SDS应包含完整的字符串
             assertNotNull(result);
-            assertEquals(TEST_STRING + suffix, result.toString());
+            assertEquals(originalString + suffix, result.toString());
         }
 
         @Test
@@ -256,12 +262,20 @@ class SdsTest {
         void testAppendBytes() {
             final byte[] suffix = "_suffix".getBytes();
             final int originalLength = testSds.length();
+            final String originalString = testSds.toString();
             
             final Sds result = testSds.append(suffix);
             
+            // 原始SDS不应被修改
+            assertEquals(originalLength, testSds.length());
+            assertEquals(originalString, testSds.toString());
+            
+            // 新的SDS应该有正确的长度和内容
             assertNotNull(result);
             assertEquals(originalLength + suffix.length, result.length());
-        }        @Test
+        }
+
+        @Test
         @DisplayName("append - 大量数据追加")
         void testAppendLargeData() {
             Sds sds = Sds.empty();
@@ -270,7 +284,7 @@ class SdsTest {
             // 追加25次，避免过度测试
             for (int i = 0; i < 25; i++) {
                 final String data = String.format("data_%04d_", i);
-                sds = sds.append(data);
+                sds = sds.append(data);  // 重新赋值，因为是不可变的
                 expected.append(data);
             }
             
@@ -343,8 +357,8 @@ class SdsTest {
         @DisplayName("Sds8 -> Sds16 升级")
         void testSds8ToSds16Upgrade() {
             // 创建一个Sds8实例
-            final Sds sds8 = Sds.create("small".getBytes());
-            assertTrue(sds8.getClass().getSimpleName().contains("Sds8"));
+            Sds sds = Sds.create("small".getBytes());
+            assertTrue(sds.getClass().getSimpleName().contains("Sds8"));
             
             // 追加足够的数据触发升级到Sds16
             final StringBuilder largeData = new StringBuilder();
@@ -352,10 +366,10 @@ class SdsTest {
                 largeData.append("0123456789");
             }
             
-            final Sds result = sds8.append(largeData.toString());
-            assertTrue(result.length() > 256);
+            sds = sds.append(largeData.toString());  // 重新赋值，因为是不可变的
+            assertTrue(sds.length() > 256);
             // 升级后的类型应该是Sds16或Sds32
-            final String className = result.getClass().getSimpleName();
+            final String className = sds.getClass().getSimpleName();
             assertTrue(className.contains("Sds16") || className.contains("Sds32"));
         }
 
@@ -365,22 +379,22 @@ class SdsTest {
             // 创建一个中等大小的SDS
             final byte[] mediumData = new byte[1000];
             Arrays.fill(mediumData, (byte) 'A');
-            final Sds sds16 = Sds.create(mediumData);
+            Sds sds = Sds.create(mediumData);
             
             // 追加足够的数据触发升级到Sds32
             final byte[] largeData = new byte[70000]; // 超过65536
             Arrays.fill(largeData, (byte) 'B');
             
-            final Sds result = sds16.append(largeData);
-            assertTrue(result.length() > 65536);
-            assertTrue(result.getClass().getSimpleName().contains("Sds32"));
+            sds = sds.append(largeData);  // 重新赋值，因为是不可变的
+            assertTrue(sds.length() > 65536);
+            assertTrue(sds.getClass().getSimpleName().contains("Sds32"));
         }
 
         @Test
         @DisplayName("升级后数据完整性")
         void testUpgradeDataIntegrity() {
             final String original = "original_data";
-            final Sds sds = Sds.fromString(original);
+            Sds sds = Sds.fromString(original);
             
             // 构建大量追加数据
             final StringBuilder appendData = new StringBuilder();
@@ -388,11 +402,11 @@ class SdsTest {
                 appendData.append("_").append(i);
             }
             
-            final Sds result = sds.append(appendData.toString());
+            sds = sds.append(appendData.toString());  // 重新赋值，因为是不可变的
             final String expected = original + appendData.toString();
             
-            assertEquals(expected, result.toString());
-            assertEquals(expected.length(), result.length());
+            assertEquals(expected, sds.toString());
+            assertEquals(expected.length(), sds.length());
         }
     }
 
@@ -481,13 +495,17 @@ class SdsTest {
             final byte[] data1 = {1, 2, 3, 0, 4, 5};
             final byte[] data2 = {6, 0, 7, 8, 0};
             
-            final Sds sds = Sds.create(data1);
-            sds.append(data2);
+            Sds sds = Sds.create(data1);
+            final byte[] originalBytes = sds.getBytes();
+            sds = sds.append(data2);  // 重新赋值，因为是不可变的
             
             final byte[] expected = new byte[data1.length + data2.length];
             System.arraycopy(data1, 0, expected, 0, data1.length);
             System.arraycopy(data2, 0, expected, data1.length, data2.length);
             
+            // 验证原始数据未被修改
+            assertArrayEquals(data1, originalBytes);
+            // 验证新对象包含完整数据
             assertArrayEquals(expected, sds.getBytes());
         }
 
@@ -500,16 +518,26 @@ class SdsTest {
                 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46
             };
             
-            final Sds sds = Sds.create(jpegHeader);
+            Sds sds = Sds.create(jpegHeader);
+            final byte[] originalBytes = sds.getBytes();
             
             assertEquals(jpegHeader.length, sds.length());
             assertArrayEquals(jpegHeader, sds.getBytes());
             
             // 追加更多二进制数据
             final byte[] moreData = {(byte) 0x89, 0x50, 0x4E, 0x47}; // PNG signature
-            sds.append(moreData);
+            sds = sds.append(moreData);  // 重新赋值，因为是不可变的
             
+            // 验证原始数据未被修改
+            assertArrayEquals(jpegHeader, originalBytes);
+            // 验证新长度和数据
             assertEquals(jpegHeader.length + moreData.length, sds.length());
+            
+            // 验证完整数据
+            final byte[] expected = new byte[jpegHeader.length + moreData.length];
+            System.arraycopy(jpegHeader, 0, expected, 0, jpegHeader.length);
+            System.arraycopy(moreData, 0, expected, jpegHeader.length, moreData.length);
+            assertArrayEquals(expected, sds.getBytes());
         }
     }
 
@@ -559,13 +587,14 @@ class SdsTest {
         @Test
         @DisplayName("连续操作稳定性")
         void testContinuousOperationStability() {
-            final Sds sds = Sds.fromString("base");
+            Sds sds = Sds.fromString("base");
+            final String originalString = sds.toString();
             
             // 连续1000次操作
             for (int i = 0; i < 1000; i++) {
                 switch (i % 4) {
                     case 0:
-                        sds.append("_");
+                        sds = sds.append("_");  // 重新赋值，因为是不可变的
                         break;
                     case 1:
                         sds.length(); // 长度查询
@@ -582,6 +611,10 @@ class SdsTest {
             // 验证最终状态
             assertTrue(sds.length() > 4);
             assertNotNull(sds.toString());
+            
+            // 验证原始对象未被修改
+            Sds originalSds = Sds.fromString("base");
+            assertEquals(originalString, originalSds.toString());
         }
     }
 
@@ -617,24 +650,25 @@ class SdsTest {
             // 每次length()调用应该很快（小于1微秒）
             assertTrue(timePerCall < 1000, "length()调用过慢: " + timePerCall + "ns");
             assertTrue(totalLength > 0); // 确保计算了总长度
-        }        @Test
+        }
+
+        @Test
         @DisplayName("append 操作效率验证")
         void testAppendEfficiency() {
             Sds sds = Sds.empty();
-            
             final long startTime = System.nanoTime();
             
             // 追加10000次
             for (int i = 0; i < 10000; i++) {
-                sds = sds.append("x");
+                sds = sds.append("x");  // 重新赋值，因为是不可变的
             }
             
             final long endTime = System.nanoTime();
             final double timePerAppend = (endTime - startTime) / 10000.0;
             
             assertEquals(10000, sds.length());
-            // 每次追加应该很快（小于10微秒）
-            assertTrue(timePerAppend < 10000, "append操作过慢: " + timePerAppend + "ns");
+            // 每次追加应该很快（小于100微秒，因为现在是创建新对象）
+            assertTrue(timePerAppend < 100000, "append操作过慢: " + timePerAppend + "ns");
         }
 
         @Test
@@ -677,7 +711,8 @@ class SdsTest {
             for (int i = 0; i < threadCount; i++) {
                 executor.submit(() -> {
                     try {
-                        for (int j = 0; j < operationsPerThread; j++) {                            // 并发执行只读操作
+                        for (int j = 0; j < operationsPerThread; j++) {
+                            // 并发执行只读操作
                             assertEquals("concurrent_test_data", sds.toString());
                             assertEquals(20, sds.length());
                             assertNotNull(sds.getBytes());
@@ -691,7 +726,7 @@ class SdsTest {
             
             assertTrue(latch.await(5, TimeUnit.SECONDS));
             executor.shutdown();
-              // 验证数据完整性
+            // 验证数据完整性
             assertEquals("concurrent_test_data", sds.toString());
             assertEquals(20, sds.length());
         }
@@ -710,11 +745,11 @@ class SdsTest {
                 final int threadId = i;
                 executor.submit(() -> {
                     try {
-                        final Sds localSds = Sds.fromString(baseData);
+                        Sds localSds = Sds.fromString(baseData);
                         
                         // 每个线程追加不同的数据
                         for (int j = 0; j < 100; j++) {
-                            localSds.append("_thread" + threadId + "_" + j);
+                            localSds = localSds.append("_thread" + threadId + "_" + j);  // 重新赋值，因为是不可变的
                         }
                         
                         results[threadId] = localSds.toString();

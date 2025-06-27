@@ -23,61 +23,69 @@
             <maxHistory>30</maxHistory>
             <totalSizeCap>3GB</totalSizeCap>
         </rollingPolicy>
+        <immediateFlush>true</immediateFlush>
+        <prudent>true</prudent>
     </appender>
 
     <!-- 异步文件输出 -->
     <appender name="ASYNC_FILE" class="ch.qos.logback.classic.AsyncAppender">
         <appender-ref ref="FILE"/>
         <queueSize>512</queueSize>
-        <discardingThreshold>20</discardingThreshold>
+        <discardingThreshold>0</discardingThreshold>
         <includeCallerData>false</includeCallerData>
+        <neverBlock>false</neverBlock>
     </appender>
 
     <!-- 特定包的日志级别 -->
-    <logger name="site.hnfy258" level="WARN" additivity="false">
+    <logger name="site.hnfy258" level="INFO" additivity="false">
         <appender-ref ref="CONSOLE"/>
-        <appender-ref ref="ASYNC_FILE"/>
+        <appender-ref ref="FILE"/>
     </logger>
 
     <!-- 写命令和数据操作日志 -->
-    <logger name="site.hnfy258.server.handler.RespCommandHandler" level="TRACE" additivity="false">
-        <appender-ref ref="ASYNC_FILE"/>
+    <logger name="site.hnfy258.server.handler.RespCommandHandler" level="INFO" additivity="false">
+        <appender-ref ref="FILE"/>
     </logger>
 
     <!-- 持久化数据加载日志 -->
-    <logger name="site.hnfy258.rdb.RdbUtils" level="DEBUG" additivity="false">
-        <appender-ref ref="ASYNC_FILE"/>
+    <logger name="site.hnfy258.rdb.RdbUtils" level="INFO" additivity="false">
+        <appender-ref ref="FILE"/>
     </logger>
-    <logger name="site.hnfy258.aof.utils.AofUtils" level="DEBUG" additivity="false">
-        <appender-ref ref="ASYNC_FILE"/>
+    <logger name="site.hnfy258.aof.utils.AofUtils" level="INFO" additivity="false">
+        <appender-ref ref="FILE"/>
     </logger>
 
     <!-- Netty 框架日志级别 -->
     <logger name="io.netty" level="WARN" additivity="false">
         <appender-ref ref="CONSOLE"/>
-        <appender-ref ref="ASYNC_FILE"/>
+        <appender-ref ref="FILE"/>
     </logger>
 
     <!-- 复制模块详细日志 -->
-    <logger name="site.hnfy258.cluster.replication" level="WARN" additivity="false">
+    <logger name="site.hnfy258.cluster.replication" level="INFO" additivity="false">
         <appender-ref ref="CONSOLE"/>
-        <appender-ref ref="ASYNC_FILE"/>
+        <appender-ref ref="FILE"/>
     </logger>
 
     <!-- 持久化模块日志 -->
-    <logger name="site.hnfy258.aof" level="WARN" additivity="false">
+    <logger name="site.hnfy258.aof" level="DEBUG" additivity="false">
         <appender-ref ref="CONSOLE"/>
-        <appender-ref ref="ASYNC_FILE"/>
+        <appender-ref ref="FILE"/>
     </logger>
 
-    <logger name="site.hnfy258.rdb" level="WARN" additivity="false">
+    <logger name="site.hnfy258.rdb" level="INFO" additivity="false">
         <appender-ref ref="CONSOLE"/>
-        <appender-ref ref="ASYNC_FILE"/>
+        <appender-ref ref="FILE"/>
     </logger>
 
     <!-- 根日志级别 -->
-    <root level="WARN">
+    <root level="INFO">
         <appender-ref ref="CONSOLE"/>
-        <appender-ref ref="ASYNC_FILE"/>
+        <appender-ref ref="FILE"/>
     </root>
+
+    <!-- 关闭时确保日志完全写入 -->
+    <shutdownHook class="ch.qos.logback.core.hook.DelayingShutdownHook">
+        <delay>1000</delay>
+    </shutdownHook>
 </configuration>

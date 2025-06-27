@@ -35,14 +35,25 @@ class AofWriterCompleteTest {
 
     @BeforeEach
     void setUp() throws IOException {
-        aofFile = tempDir.resolve("test.aof").toFile();
+        aofFile = new File(tempDir.toFile(), "test.aof");
+        if (!aofFile.exists()) {
+            Files.createFile(aofFile.toPath());
+        }
         redisCore = mock(RedisCore.class);
     }
 
     @AfterEach
     void tearDown() throws IOException {
         if (aofWriter != null) {
-            aofWriter.close();
+            try {
+                aofWriter.close();
+            } catch (IOException e) {
+                // 忽略关闭错误，因为这是清理阶段
+            }
+            aofWriter = null;
+        }
+        if (aofFile != null && aofFile.exists()) {
+            Files.delete(aofFile.toPath());
         }
     }
 
@@ -50,9 +61,8 @@ class AofWriterCompleteTest {
      * 创建简单的AofWriter实例（无RedisCore）
      */
     private void createSimpleAofWriter() throws IOException {
-        @SuppressWarnings("resource") // AofWriter将负责关闭FileChannel
-        RandomAccessFile raf = new RandomAccessFile(aofFile, "rw");
-        aofWriter = new AofWriter(aofFile, false, 1000, raf.getChannel(), null);
+        // 不再直接创建和传递FileChannel，让AofWriter自己管理资源
+        aofWriter = new AofWriter(aofFile, false, 1000, null, null);
     }
 
     /**
