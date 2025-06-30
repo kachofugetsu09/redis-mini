@@ -7,6 +7,7 @@ import site.hnfy258.protocal.BulkString;
 import site.hnfy258.protocal.Resp;
 import site.hnfy258.protocal.RespArray;
 
+import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -32,7 +33,7 @@ import java.util.Map;
  */
 @Setter
 @Getter
-public class RedisHash implements RedisData {
+public class RedisHash implements RedisData, Serializable {
 
     /** 数据过期时间，-1表示永不过期 */
     private volatile long timeout = -1;

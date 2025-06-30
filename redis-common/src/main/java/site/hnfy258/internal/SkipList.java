@@ -2,6 +2,7 @@ package site.hnfy258.internal;
 
 import lombok.extern.slf4j.Slf4j;
 
+import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
@@ -34,7 +35,7 @@ import java.util.Random;
  * @since 1.0
  */
 @Slf4j
-public class SkipList<T extends Comparable<T>> {
+public class SkipList<T extends Comparable<T>> implements Serializable {
     /** 最大层数，Redis默认值 */
     private static final int MAX_LEVEL = 32;
     

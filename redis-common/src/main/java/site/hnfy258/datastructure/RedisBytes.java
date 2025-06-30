@@ -1,5 +1,6 @@
 package site.hnfy258.datastructure;
 
+import java.io.Serializable;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
@@ -25,7 +26,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * @author hnfy258
  * @since 1.0
  */
-public final class RedisBytes implements Comparable<RedisBytes> {
+public final class RedisBytes implements Comparable<RedisBytes>, Serializable {
 
     /**
      * 字符串编码解码使用的字符集。

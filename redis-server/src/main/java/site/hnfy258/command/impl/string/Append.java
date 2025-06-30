@@ -62,13 +62,10 @@ public class Append implements Command {
         }
         
         RedisString redisString = (RedisString) data;
-        
-        // 由于Sds是不可变的，我们需要创建一个新的Sds实例
+
         Sds newSds = redisString.getSds().append(value.getBytes());
-        // 更新RedisString中的Sds
         redisString.setSds(newSds);
-        
-        // 返回追加后的总长度
+
         return RespInteger.valueOf(newSds.length());
     }
 

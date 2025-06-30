@@ -6,6 +6,7 @@ import site.hnfy258.protocal.BulkString;
 import site.hnfy258.protocal.Resp;
 import site.hnfy258.protocal.RespArray;
 
+import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedList;
@@ -32,7 +33,7 @@ import java.util.List;
  */
 @Setter
 @Getter
-public class RedisList implements RedisData {
+public class RedisList implements RedisData, Serializable {
 
     /** 数据过期时间，-1表示永不过期 */
     private volatile long timeout = -1;
@@ -201,7 +202,7 @@ public class RedisList implements RedisData {
      * 
      * @return 所有元素的数组
      */
-    public synchronized RedisBytes[] getAll() {
+    public  RedisBytes[] getAll() {
         return list.toArray(new RedisBytes[0]);
     }
 }

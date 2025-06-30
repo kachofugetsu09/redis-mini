@@ -8,6 +8,7 @@ import site.hnfy258.protocal.BulkString;
 import site.hnfy258.protocal.Resp;
 import site.hnfy258.protocal.RespArray;
 
+import java.io.Serializable;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -34,7 +35,7 @@ import java.util.stream.Collectors;
  */
 @Setter
 @Getter
-public class RedisZset implements RedisData {
+public class RedisZset implements RedisData, Serializable {
     
     /**
      * Zset节点，包含分数和成员信息，实现Comparable接口以支持跳表排序

@@ -1,4 +1,5 @@
 package site.hnfy258.internal;
+import java.io.*;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicReference;
@@ -560,7 +561,10 @@ public class Dict<K,V>implements AutoCloseable {
             DictEntry<K, V> headOfCopiedList = null;
 
             while (entry != null) {
-                DictEntry<K, V> newEntry = new DictEntry<>(entry.key, entry.value);
+
+                K copiedKey = deepCopyObject(entry.key);
+                V copiedValue = deepCopyObject(entry.value);
+                DictEntry<K, V> newEntry = new DictEntry<>(copiedKey,copiedValue);
                 if (headOfCopiedList == null) {
                     headOfCopiedList = newEntry;
                     currentCopiedEntry = newEntry;
@@ -574,6 +578,28 @@ public class Dict<K,V>implements AutoCloseable {
             copy.table[i] = headOfCopiedList;
         }
         return copy;
+    }
+
+    @SuppressWarnings("unchecked")
+    private <T> T deepCopyObject(T obj) {
+        if(obj == null){
+            return null;
+        }
+        try{
+            if(obj instanceof Serializable){
+                ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                ObjectOutputStream oos = new ObjectOutputStream(baos);
+                oos.writeObject(obj);
+                oos.close();
+
+                ByteArrayInputStream bais = new ByteArrayInputStream(baos.toByteArray());
+                return (T) new ObjectInputStream(bais).readObject();
+            }
+
+            return (T) obj; // 如果不是可序列化对象，直接返回原对象
+        }catch(Exception e){
+            return obj;
+        }
     }
 
     /**

@@ -36,7 +36,8 @@ public class Set implements Command {
 
     @Override
     public Resp handle() {
-        if(redisContext.get(key) != null){            RedisData data = redisContext.get(key);
+        if(redisContext.get(key) != null){
+            RedisData data = redisContext.get(key);
             if(data instanceof RedisString){
                 RedisString redisString = (RedisString) data;
                 redisString.setSds(Sds.create(value.getBytesUnsafe()));

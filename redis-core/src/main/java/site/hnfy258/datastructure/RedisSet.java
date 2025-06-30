@@ -100,7 +100,9 @@ public class RedisSet implements RedisData {
         
         result.add(new RespArray(saddCommand.toArray(new Resp[0])));
         return result;
-    }    /** 用于标记集合中元素存在的常量值 */
+    }
+
+    /** 用于标记集合中元素存在的常量值 */
     private static final Object PRESENT = new Object();
 
     /**
