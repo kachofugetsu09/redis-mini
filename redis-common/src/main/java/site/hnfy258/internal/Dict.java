@@ -202,7 +202,7 @@ public class Dict<K,V> {
     public Object put(K key, V value){
         if(key == null) throw new IllegalArgumentException("key can not be null");
         
-        synchronized (this) {
+         {
             //如果不在rehash
             if(rehashIndex == -1){
                 double loadFactor = (double) ht0.used / ht0.size;
@@ -287,7 +287,7 @@ public class Dict<K,V> {
     public V remove(K key){
         if(key ==null) return null;
         
-        synchronized (this) {
+       {
             if(rehashIndex != -1) rehashStep();
 
             DictEntry<K,V> entry = find(key);
