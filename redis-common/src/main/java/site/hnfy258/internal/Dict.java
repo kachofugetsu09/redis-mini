@@ -191,7 +191,7 @@ public class Dict<K,V> {
     public Object put(K key, V value){
         if(key == null) throw new IllegalArgumentException("key can not be null");
         
-        synchronized (this) {
+         {
             //如果不在rehash
             if(rehashIndex == -1){
                 double loadFactor = (double) ht0.used / ht0.size;
@@ -250,6 +250,7 @@ public class Dict<K,V> {
                 ht0.used++;
                 if(isSnapshotting.get()) {
                     modifiedKeys.add(key); // 记录新增的key
+                    System.out.println("新增key到modifiedKeys: " + key + ", 当前modifiedKeys大小: " + modifiedKeys.size());
                 }
             }
 
@@ -396,7 +397,7 @@ public class Dict<K,V> {
                 Object value = entry.value;
                 if(value instanceof ForwardNode) {
                     ForwardNode forwardNode = (ForwardNode) value;
-                    value = forwardNode.getCurrentValue(isSnapshotting.get());
+                    value = forwardNode.getCurrentValue(false);
                 }
                 if(value != null) {
                     keys.add(entry.key);
@@ -411,7 +412,7 @@ public class Dict<K,V> {
                     Object value = entry.value;
                     if(value instanceof ForwardNode) {
                         ForwardNode forwardNode = (ForwardNode) value;
-                        value = forwardNode.getCurrentValue(isSnapshotting.get());
+                        value = forwardNode.getCurrentValue(false);
                     }
                     if(value != null) {
                         keys.add(entry.key);
@@ -451,7 +452,7 @@ public class Dict<K,V> {
                     Object value = entry.value;
                     if(value instanceof ForwardNode) {
                         ForwardNode forwardNode = (ForwardNode) value;
-                        value = forwardNode.getCurrentValue(isSnapshotting.get());
+                        value = forwardNode.getCurrentValue(false);
                     }
                     if(value != null) {
                         map.put(entry.key, (V) value);
@@ -474,50 +475,62 @@ public class Dict<K,V> {
     }
 
     public int size(){
-        int count = 0;
-        
-        // 遍历 ht0
-        for(int i = 0; i < ht0.size; i++) {
-            DictEntry<K,V> entry = ht0.table[i];
-            while(entry != null) {
-                Object value = entry.value;
-                if(value instanceof ForwardNode) {
-                    ForwardNode forwardNode = (ForwardNode) value;
-                    // 主线程看到的是新值
-                    value = forwardNode.getCurrentValue(false);
-                }
-                if(value != null) {
-                    count++;
-                }
-                entry = entry.next;
-            }
-        }
-        
-        // 遍历 ht1（如果存在）
-        if(ht1 != null) {
-            for(int i = 0; i < ht1.size; i++) {
-                DictEntry<K,V> entry = ht1.table[i];
+        synchronized (this) {
+            int count = 0;
+            System.out.println("=== size()方法开始计算 ===");
+            
+            // 遍历 ht0
+            for(int i = 0; i < ht0.size; i++) {
+                DictEntry<K,V> entry = ht0.table[i];
                 while(entry != null) {
                     Object value = entry.value;
                     if(value instanceof ForwardNode) {
                         ForwardNode forwardNode = (ForwardNode) value;
                         // 主线程看到的是新值
                         value = forwardNode.getCurrentValue(false);
+                        System.out.println("size()中遇到ForwardNode: key=" + entry.key + ", 新值=" + value);
                     }
                     if(value != null) {
                         count++;
+                    } else {
+                        System.out.println("size()中发现null值: key=" + entry.key);
                     }
                     entry = entry.next;
                 }
             }
+            
+            // 遍历 ht1（如果存在）
+            if(ht1 != null) {
+                for(int i = 0; i < ht1.size; i++) {
+                    DictEntry<K,V> entry = ht1.table[i];
+                    while(entry != null) {
+                        Object value = entry.value;
+                        if(value instanceof ForwardNode) {
+                            ForwardNode forwardNode = (ForwardNode) value;
+                            // 主线程看到的是新值
+                            value = forwardNode.getCurrentValue(false);
+                            System.out.println("size()中遇到ForwardNode(ht1): key=" + entry.key + ", 新值=" + value);
+                        }
+                        if(value != null) {
+                            count++;
+                        } else {
+                            System.out.println("size()中发现null值(ht1): key=" + entry.key);
+                        }
+                        entry = entry.next;
+                    }
+                }
+            }
+            
+            System.out.println("=== size()方法结束，总计=" + count + " ===");
+            return count;
         }
-        
-        return count;
     }
 
     // 开始创建快照
     public void startSnapshot() {
-        isSnapshotting.set(true);
+        synchronized (this) {
+            isSnapshotting.set(true);
+        }
     }
     
     // 完成快照，应用所有ForwardNode中的新值
@@ -529,23 +542,34 @@ public class Dict<K,V> {
     // 应用所有ForwardNode中的新值
     private  void applyForwardNodes() {
         synchronized (this){
+            System.out.println("=== applyForwardNodes开始 ===");
+            System.out.println("modifiedKeys数量: " + modifiedKeys.size());
+            
             // 只处理被修改的key，避免遍历整个哈希表
             for(K key : modifiedKeys) {
                 DictEntry<K,V> entry = find(key);
                 if(entry != null && entry.value instanceof ForwardNode) {
                     ForwardNode forwardNode = (ForwardNode) entry.value;
+                    System.out.println("处理ForwardNode: key=" + key + ", operation=" + forwardNode.operation.get());
 
                     if(forwardNode.newValue.get() == ForwardNode.REMOVED_SIGNAL) {
                         // 删除该entry
+                        System.out.println("删除key: " + key);
                         removeEntryFromTable(key);
                     } else {
                         // 应用新值
-                        entry.value = forwardNode.newValue.get();
+                        Object newValue = forwardNode.newValue.get();
+//                        System.out.println("应用新值: key=" + key + ", value=" + newValue);
+                        entry.value = newValue;
+//                        System.out.println("应用后entry.value=" + entry.value + ", 类型=" + entry.value.getClass().getSimpleName());
                     }
+                } else {
+//                    System.out.println("key=" + key + ", entry=" + entry + ", value=" + (entry != null ? entry.value : "null"));
                 }
             }
             // 清空修改记录
             modifiedKeys.clear();
+            System.out.println("=== applyForwardNodes结束 ===");
         }
 
     }
@@ -602,18 +626,23 @@ public class Dict<K,V> {
     }
 
     /**
-     * 异步创建RDB快照
+     * 异步创建RDB快照 - 真正的无锁实现
+     * 主线程可以继续写入，快照线程获取一致性视图
      * @return CompletableFuture包装的快照数据
      */
     public CompletableFuture<DictSnapshot<K,V>> createRdbSnapshot() {
         return CompletableFuture.supplyAsync(() -> {
-            // 同步创建快照，确保快照创建是原子的
-            synchronized (this) {
-                // 开始快照
-                startSnapshot();
-                
-                // 创建快照，包含快照时刻的所有有效数据
+            // 无锁启动快照，不阻塞主线程
+            startSnapshot();
+            
+            try {
+                // 在后台线程中创建快照，主线程可以继续写入
+                System.out.println("Creating RDB snapshot in background...");
                 return new DictSnapshot<>(this);
+            } catch (Exception e) {
+                // 如果快照创建失败，确保清理快照状态
+                finishSnapshot();
+                throw new RuntimeException("Failed to create RDB snapshot", e);
             }
         });
     }
@@ -713,4 +742,60 @@ public class Dict<K,V> {
         }
     }
 
+    /**
+     * 创建快照但不调用finishSnapshot
+     * 
+     * <p>在快照状态已经启动的情况下，收集当前快照数据但不结束快照状态。
+     * 用于在RDB写入过程中直接迭代快照数据。
+     * 
+     * @return 快照数据映射
+     */
+    @SuppressWarnings("unchecked")
+    public Map<K,V> createSnapshotWithoutFinish() {
+        if (!isSnapshotting.get()) {
+            throw new IllegalStateException("必须在快照状态下调用此方法");
+        }
+        
+        Map<K,V> snapshot = new HashMap<>();
+        
+        // 获取快照时的数据
+        for(int i = 0; i < ht0.size; i++) {
+            DictEntry<K,V> entry = ht0.table[i];
+            while(entry != null) {
+                Object value = entry.value;
+                if(value instanceof ForwardNode) {
+                    System.out.println("遇到转发节点，使用旧值");
+                    ForwardNode forwardNode = (ForwardNode) value;
+                    Object snapshotValue = forwardNode.getCurrentValue(true);
+                    if(snapshotValue != null) {
+                        snapshot.put(entry.key, (V) snapshotValue);
+                    }
+                } else if(value != null) {
+                    snapshot.put(entry.key, (V) value);
+                }
+                entry = entry.next;
+            }
+        }
+
+        if(ht1 != null) {
+            for(int i = 0; i < ht1.size; i++) {
+                DictEntry<K,V> entry = ht1.table[i];
+                while(entry != null) {
+                    Object value = entry.value;
+                    if(value instanceof ForwardNode) {
+                        ForwardNode forwardNode = (ForwardNode) value;
+                        Object snapshotValue = forwardNode.getCurrentValue(true);
+                        if(snapshotValue != null) {
+                            snapshot.put(entry.key, (V) snapshotValue);
+                        }
+                    } else if(value != null) {
+                        snapshot.put(entry.key, (V) value);
+                    }
+                    entry = entry.next;
+                }
+            }
+        }
+
+        return snapshot;
+    }
 }
