@@ -285,14 +285,14 @@ public class RdbUtils {
      * @param value 哈希表值
      * @throws IOException 如果发生IO错误
      */
-    public static void saveHash(DataOutputStream dos, RedisBytes key, RedisHash value) throws IOException {        dos.writeByte(RdbConstants.HASH_TYPE);
+    public static void saveHash(DataOutputStream dos, RedisBytes key, RedisHash value) throws IOException {
+        dos.writeByte(RdbConstants.HASH_TYPE);
         writeString(dos, key.getBytes());
         Dict<RedisBytes, RedisBytes> hash = value.getHash();
         writeLength(dos, (int) hash.size());
 
-        // 使用线程安全的快照避免并发问题
-        Dict.DictSnapshot<RedisBytes, RedisBytes> snapshot = hash.createSnapshot();
-        for (Map.Entry<RedisBytes, RedisBytes> entry : snapshot) {
+        Map<RedisBytes, RedisBytes> snapshot = hash.createSnapshot();
+        for (Map.Entry<RedisBytes, RedisBytes> entry : snapshot.entrySet()) {
             writeString(dos, entry.getKey().getBytesUnsafe());
             writeString(dos, entry.getValue().getBytesUnsafe());
         }

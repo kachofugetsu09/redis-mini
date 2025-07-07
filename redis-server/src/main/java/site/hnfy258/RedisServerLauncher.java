@@ -8,7 +8,7 @@ public class RedisServerLauncher {
     public static void main(String[] args) throws Exception {
         RedisServerConfig config = RedisServerConfig.builder()
                 .host("localhost")
-                .port(6379).aofEnabled(true)
+                .port(6379).aofEnabled(false).rdbEnabled(true)
                 .build();
                 
         RedisServer redisServer = new RedisMiniServer(config);

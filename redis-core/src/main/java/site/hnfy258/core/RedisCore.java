@@ -100,4 +100,35 @@ public interface RedisCore {
      * @return 如果命令执行成功返回true，否则返回false
      */
     boolean executeCommand(String commandName, String[] args);
+    
+    /**
+     * 尝试获取快照锁
+     * 
+     * <p>确保同一时间只有一个快照操作（AOF重写或RDB快照）可以执行。
+     * 
+     * @param snapshotType 快照类型（"AOF"或"RDB"）
+     * @return 如果成功获取锁返回true，否则返回false
+     */
+    boolean tryAcquireSnapshotLock(String snapshotType);
+    
+    /**
+     * 释放快照锁
+     * 
+     * @param snapshotType 快照类型（"AOF"或"RDB"）
+     */
+    void releaseSnapshotLock(String snapshotType);
+    
+    /**
+     * 检查当前是否有快照操作正在进行
+     * 
+     * @return 如果有快照操作正在进行返回true，否则返回false
+     */
+    boolean isSnapshotInProgress();
+    
+    /**
+     * 获取当前正在进行的快照类型
+     * 
+     * @return 当前快照类型，如果没有快照操作则返回null
+     */
+    String getCurrentSnapshotType();
 }

@@ -8,6 +8,7 @@ import site.hnfy258.datastructure.RedisData;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Redis核心数据操作实现类
@@ -45,6 +46,9 @@ public class RedisCoreImpl implements RedisCore {
     
     /** 命令执行器，由上层模块注入，用于命令重放等场景 */
     private CommandExecutor commandExecutor;
+    
+    /** 快照锁，确保同一时间只有一个快照操作可以执行 */
+    private final AtomicReference<String> snapshotLock = new AtomicReference<>(null);
 
     /**
      * 构造函数：初始化指定数量的数据库
@@ -202,5 +206,54 @@ public class RedisCoreImpl implements RedisCore {
      */
     public void setCommandExecutor(CommandExecutor commandExecutor) {
         this.commandExecutor = commandExecutor;
+    }
+    
+    /**
+     * 尝试获取快照锁
+     * 
+     * <p>确保同一时间只有一个快照操作（AOF重写或RDB快照）可以执行。
+     * 
+     * @param snapshotType 快照类型（"AOF"或"RDB"）
+     * @return 如果成功获取锁返回true，否则返回false
+     */
+    @Override
+    public boolean tryAcquireSnapshotLock(String snapshotType) {
+        if (snapshotType == null) {
+            throw new IllegalArgumentException("快照类型不能为null");
+        }
+        return snapshotLock.compareAndSet(null, snapshotType);
+    }
+    
+    /**
+     * 释放快照锁
+     * 
+     * @param snapshotType 快照类型（"AOF"或"RDB"）
+     */
+    @Override
+    public void releaseSnapshotLock(String snapshotType) {
+        if (snapshotType == null) {
+            return;
+        }
+        snapshotLock.compareAndSet(snapshotType, null);
+    }
+    
+    /**
+     * 检查当前是否有快照操作正在进行
+     * 
+     * @return 如果有快照操作正在进行返回true，否则返回false
+     */
+    @Override
+    public boolean isSnapshotInProgress() {
+        return snapshotLock.get() != null;
+    }
+    
+    /**
+     * 获取当前正在进行的快照类型
+     * 
+     * @return 当前快照类型，如果没有快照操作则返回null
+     */
+    @Override
+    public String getCurrentSnapshotType() {
+        return snapshotLock.get();
     }
 }

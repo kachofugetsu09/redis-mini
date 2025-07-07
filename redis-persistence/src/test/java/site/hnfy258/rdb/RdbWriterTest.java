@@ -11,6 +11,7 @@ import org.mockito.MockitoAnnotations;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
+import static org.mockito.ArgumentMatchers.*;
 
 import site.hnfy258.core.RedisCore;
 import site.hnfy258.database.RedisDB;
@@ -53,6 +54,13 @@ class RdbWriterTest {
     @BeforeEach
     void setUp() {
         mockCloser = MockitoAnnotations.openMocks(this);
+        
+        // 设置快照锁的Mock行为
+        when(mockRedisCore.tryAcquireSnapshotLock(anyString())).thenReturn(true);
+        doNothing().when(mockRedisCore).releaseSnapshotLock(anyString());
+        when(mockRedisCore.isSnapshotInProgress()).thenReturn(false);
+        when(mockRedisCore.getCurrentSnapshotType()).thenReturn(null);
+        
         rdbWriter = new RdbWriter(mockRedisCore);
     }
 
@@ -131,7 +139,7 @@ class RdbWriterTest {
 
             // 创建Mock字典
             Dict<RedisBytes, RedisData> mockDict = mock(Dict.class);
-            when(mockDict.createSnapshot().toMap()).thenReturn(testData);
+            when(mockDict.createSnapshot()).thenReturn(testData);
 
             // 设置Mock数据库
             when(mockRedisDB.getId()).thenReturn(0);
@@ -206,19 +214,34 @@ class RdbWriterTest {
 
         @SuppressWarnings("unchecked")
         private void setupAsyncDatabaseMock() {
-            // 与同步测试中相同的设置
+            // 创建测试数据
             Map<RedisBytes, RedisData> testData = new HashMap<>();
             RedisBytes testKey = new RedisBytes("test-key".getBytes());
             RedisString testValue = new RedisString(Sds.create("test-value".getBytes()));
             testData.put(testKey, testValue);
 
+            // 创建Mock字典
             Dict<RedisBytes, RedisData> mockDict = mock(Dict.class);
-            when(mockDict.createSnapshot().toMap()).thenReturn(testData);
+            
+            // 设置同步快照方法
+            when(mockDict.createSnapshot()).thenReturn(testData);
+            
+            // 设置异步快照方法
+            Dict.DictSnapshot<RedisBytes, RedisData> mockSnapshot = mock(Dict.DictSnapshot.class);
+            when(mockSnapshot.toMap()).thenReturn(testData);
+            when(mockSnapshot.size()).thenReturn(testData.size());
+            when(mockSnapshot.isEmpty()).thenReturn(testData.isEmpty());
+            
+            CompletableFuture<Dict.DictSnapshot<RedisBytes, RedisData>> snapshotFuture = 
+                CompletableFuture.completedFuture(mockSnapshot);
+            when(mockDict.createRdbSnapshot()).thenReturn(snapshotFuture);
 
+            // 设置Mock数据库
             when(mockRedisDB.getId()).thenReturn(0);
             when(mockRedisDB.size()).thenReturn(1L);
             when(mockRedisDB.getData()).thenReturn(mockDict);
 
+            // 设置RedisCore返回数据库数组
             when(mockRedisCore.getDataBases()).thenReturn(new RedisDB[]{mockRedisDB});
         }
     }
@@ -297,7 +320,7 @@ class RdbWriterTest {
         @SuppressWarnings("unchecked")
         private void setupDatabaseWithData(Map<RedisBytes, RedisData> testData) {
             Dict<RedisBytes, RedisData> mockDict = mock(Dict.class);
-            when(mockDict.createSnapshot().toMap()).thenReturn(testData);
+            when(mockDict.createSnapshot()).thenReturn(testData);
 
             when(mockRedisDB.getId()).thenReturn(0);
             when(mockRedisDB.size()).thenReturn((long) testData.size());

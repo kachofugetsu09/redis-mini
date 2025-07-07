@@ -222,7 +222,8 @@ public class RedisContextImpl implements RedisContext {
         return persistence.isRdbEnabled();
     }
     
-    // ========== 扩展功能实现 ==========    @Override
+    // ========== 扩展功能实现 ==========    
+    @Override
     public boolean rewriteAof() {
         if (persistence.isAofEnabled()) {
             // 1. 通过AofManager的Writer执行真正的AOF重写

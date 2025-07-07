@@ -26,7 +26,6 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Function;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
@@ -380,7 +379,7 @@ public class AofWriter implements Writer {
         }
     }
 
-    boolean isRewriting() {
+    public boolean isRewriting() {
         return rewriting.get();
     }
 
@@ -421,6 +420,13 @@ public class AofWriter implements Writer {
             return false;
         }
 
+        // 尝试获取快照锁
+        if (!redisCore.tryAcquireSnapshotLock("AOF")) {
+            String currentType = redisCore.getCurrentSnapshotType();
+            log.warn("无法获取快照锁，当前有{}快照操作正在进行", currentType != null ? currentType : "其他");
+            return false;
+        }
+
         rewriting.set(true);
         Thread rewriteThread = new Thread(this::twoPhaseRewriteTask);
         rewriteThread.start();
@@ -437,14 +443,14 @@ public class AofWriter implements Writer {
             bufferFile = File.createTempFile("redis_aof_buffer", ".aof", file.getParentFile());
             
             // 触发异步快照，真正的异步，不等待
-            CompletableFuture<Map<Integer, Dict.DictSnapshot<RedisBytes, RedisData>>> snapshotsFuture = triggerAsyncSnapshot();
+            CompletableFuture<Map<Integer, Map<RedisBytes, RedisData>>> snapshotsFuture = triggerAsyncSnapshot();
             
             // 启动缓冲区处理
             CompletableFuture<Void> bufferWriteFuture = processRewriteBuffer(bufferFile);
             
             try {
                 // 等待快照完成
-                Map<Integer, Dict.DictSnapshot<RedisBytes, RedisData>> snapshots = 
+                Map<Integer, Map<RedisBytes, RedisData>> snapshots = 
                     snapshotsFuture.get(30, TimeUnit.SECONDS);
                 
                 // 写入快照数据到文件A
@@ -484,33 +490,36 @@ public class AofWriter implements Writer {
             rewriting.set(false);
             clearRewriteBuffer();
             bufferProcessingComplete.countDown(); // 确保不会死锁
+            
+            // 释放快照锁
+            if (redisCore != null) {
+                redisCore.releaseSnapshotLock("AOF");
+                log.debug("释放AOF快照锁");
+            }
         }
     }
 
-    private CompletableFuture<Map<Integer, Dict.DictSnapshot<RedisBytes, RedisData>>> triggerAsyncSnapshot() {
+    private CompletableFuture<Map<Integer, Map<RedisBytes, RedisData>>> triggerAsyncSnapshot() {
         return CompletableFuture.supplyAsync(() -> {
             try {
                 RedisDB[] dataBases = redisCore.getDataBases();
-                Map<Integer, Dict.DictSnapshot<RedisBytes, RedisData>> snapshots = new ConcurrentHashMap<>();
-                List<CompletableFuture<Void>> snapshotFutures = new ArrayList<>();
+                Map<Integer, Map<RedisBytes, RedisData>> snapshots = new ConcurrentHashMap<>();
                 
-                // 为每个数据库并行触发快照
+                // 在异步线程中同步创建快照，确保快照时间点一致性
                 for (RedisDB db : dataBases) {
                     if (db != null && db.size() > 0) {
-                        CompletableFuture<Void> future = db.getData().createAofSnapshot()
-                            .thenAccept(snapshot -> {
-                                if (snapshot != null) {
-                                    snapshots.put(db.getId(), snapshot);
-                                }
-                            });
-                        snapshotFutures.add(future);
-                        pendingSnapshots.offer(future);
+                        try {
+                            // 使用同步快照方法，确保快照一致性
+                            Map<RedisBytes, RedisData> snapshot = db.getData().createSnapshot();
+                            if (snapshot != null && !snapshot.isEmpty()) {
+                                snapshots.put(db.getId(), snapshot);
+                            }
+                        } catch (Exception e) {
+                            log.error("创建数据库{}快照失败", db.getId(), e);
+                            throw new RuntimeException("创建数据库快照失败", e);
+                        }
                     }
                 }
-                
-                // 等待所有快照完成
-                CompletableFuture.allOf(snapshotFutures.toArray(new CompletableFuture[0]))
-                    .get(SNAPSHOT_TIMEOUT_MS, TimeUnit.MILLISECONDS);
                 
                 return snapshots;
             } catch (Exception e) {
@@ -545,7 +554,7 @@ public class AofWriter implements Writer {
         });
     }
 
-    private void writeSnapshotsToFile(Map<Integer, Dict.DictSnapshot<RedisBytes, RedisData>> snapshots, 
+    private void writeSnapshotsToFile(Map<Integer, Map<RedisBytes, RedisData>> snapshots, 
                                     File snapshotFile) throws IOException {
         try (RandomAccessFile raf = new RandomAccessFile(snapshotFile, "rw");
              FileChannel channel = raf.getChannel()) {
@@ -555,14 +564,14 @@ public class AofWriter implements Writer {
             Collections.sort(dbIds);
             
             for (Integer dbId : dbIds) {
-                Dict.DictSnapshot<RedisBytes, RedisData> snapshot = snapshots.get(dbId);
+                Map<RedisBytes, RedisData> snapshot = snapshots.get(dbId);
                 if (snapshot != null) {
                     // 写入SELECT命令
                     writeSelectCommand(dbId, channel);
                     
                     // 批量写入数据
                     List<Map.Entry<RedisBytes, RedisData>> batch = new ArrayList<>(1000);
-                    for (Map.Entry<RedisBytes, RedisData> entry : snapshot) {
+                    for (Map.Entry<RedisBytes, RedisData> entry : snapshot.entrySet()) {
                         batch.add(entry);
                         if (batch.size() >= 1000) {
                             writeBatchToAof(batch, channel);
@@ -584,9 +593,12 @@ public class AofWriter implements Writer {
         File mergedFile = File.createTempFile("redis_aof_merged", ".aof", file.getParentFile());
         
         try {
-            try (FileChannel targetChannel = new RandomAccessFile(mergedFile, "rw").getChannel();
-                 FileChannel snapshotChannel = new RandomAccessFile(snapshotFile, "r").getChannel();
-                 FileChannel bufferChannel = new RandomAccessFile(bufferFile, "r").getChannel()) {
+            try (RandomAccessFile targetRaf = new RandomAccessFile(mergedFile, "rw");
+                 FileChannel targetChannel = targetRaf.getChannel();
+                 RandomAccessFile snapshotRaf = new RandomAccessFile(snapshotFile, "r");
+                 FileChannel snapshotChannel = snapshotRaf.getChannel();
+                 RandomAccessFile bufferRaf = new RandomAccessFile(bufferFile, "r");
+                 FileChannel bufferChannel = bufferRaf.getChannel()) {
                 
                 // 1. 复制快照文件内容
                 snapshotChannel.transferTo(0, snapshotChannel.size(), targetChannel);
@@ -790,7 +802,7 @@ public class AofWriter implements Writer {
 
         try {
             // 等待快照创建完成
-            Dict.DictSnapshot<RedisBytes, RedisData> snapshot = data.createAofSnapshot()
+            Dict.DictSnapshot<RedisBytes, RedisData> snapshot = data.createRdbSnapshot()
                 .get(SNAPSHOT_TIMEOUT_MS, TimeUnit.MILLISECONDS);
 
             List<Map.Entry<RedisBytes, RedisData>> batch = new ArrayList<>(1000);

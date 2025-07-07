@@ -4,7 +4,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import site.hnfy258.datastructure.RedisBytes;
-import site.hnfy258.datastructure.RedisData;
 import site.hnfy258.datastructure.RedisString;
 import site.hnfy258.internal.Sds;
 
