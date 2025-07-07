@@ -88,7 +88,6 @@ public class snapshotTest {
         assertFalse(bgsaveFuture.isDone(), "BGSAVE应该在后台执行，主线程立即返回");
         log.info("BGSAVE已启动，在后台线程中执行...");
 
-        // 添加一个短暂的延迟，确保快照状态完全启动
 
 
         // 检查快照启动后的主线程数据状态

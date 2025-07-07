@@ -797,38 +797,7 @@ public class AofWriter implements Writer {
         }
     }
 
-    private void writeDatabaseToAof(RedisDB db, FileChannel channel) throws IOException {
-        Dict<RedisBytes, RedisData> data = db.getData();
 
-        try {
-            // 等待快照创建完成
-            Dict.DictSnapshot<RedisBytes, RedisData> snapshot = data.createRdbSnapshot()
-                .get(SNAPSHOT_TIMEOUT_MS, TimeUnit.MILLISECONDS);
-
-            List<Map.Entry<RedisBytes, RedisData>> batch = new ArrayList<>(1000);
-            int batchSize = 1000;
-
-            // 分批处理快照数据
-            for (Map.Entry<RedisBytes, RedisData> entry : snapshot) {
-                batch.add(entry);
-                if (batch.size() >= batchSize) {
-                    writeBatchToAof(batch, channel);
-                    batch.clear();
-                }
-            }
-
-            // 处理剩余数据
-            if (!batch.isEmpty()) {
-                writeBatchToAof(batch, channel);
-                batch.clear();
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IOException("AOF重写过程中被中断", e);
-        } catch (ExecutionException | TimeoutException e) {
-            throw new IOException("AOF重写过程中创建快照失败", e);
-        }
-    }
 
     private void writeBatchToAof(List<Map.Entry<RedisBytes, RedisData>> batch, FileChannel channel) {
         for (Map.Entry<RedisBytes, RedisData> entry : batch) {

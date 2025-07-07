@@ -57,9 +57,20 @@ public class Dict<K,V> {
     }
 
     public boolean containsKey(K key) {
-            if(key == null) return false;
-            if(rehashIndex != -1) rehashStep();
-            return find(key) != null;
+        if(key == null) return false;
+        if(rehashIndex != -1) rehashStep();
+        
+        DictEntry<K,V> entry = find(key);
+        if(entry == null) return false;
+        
+        // 检查ForwardNode
+        if(entry.value instanceof ForwardNode) {
+            ForwardNode forwardNode = (ForwardNode) entry.value;
+            Object value = forwardNode.getCurrentValue(false);
+            return value != null;
+        }
+        
+        return entry.value != null;
     }
 
 
@@ -191,7 +202,7 @@ public class Dict<K,V> {
     public Object put(K key, V value){
         if(key == null) throw new IllegalArgumentException("key can not be null");
         
-         {
+        synchronized (this) {
             //如果不在rehash
             if(rehashIndex == -1){
                 double loadFactor = (double) ht0.used / ht0.size;
@@ -211,7 +222,7 @@ public class Dict<K,V> {
                     // 如果entry.value已经是ForwardNode，更新其新值
                     if(entry.value instanceof ForwardNode) {
                         ForwardNode forwardNode = (ForwardNode) entry.value;
-                        oldValue = forwardNode.getCurrentValue(false); // 获取快照时的旧值
+                        oldValue = forwardNode.getCurrentValue(false);
                         forwardNode.newValue.set(value); // 更新新值
                         forwardNode.operation.set(ForwardType.UPDATE);
                     } else {
@@ -275,32 +286,35 @@ public class Dict<K,V> {
     @SuppressWarnings("unchecked")
     public V remove(K key){
         if(key ==null) return null;
-        if(rehashIndex != -1) rehashStep();
-
-        DictEntry<K,V> entry = find(key);
-        if(entry == null) return null;
-
-        Object oldValue = entry.value;
         
-        // 如果正在创建快照
-        if(isSnapshotting.get()) {
-            if(entry.value instanceof ForwardNode) {
-                ForwardNode forwardNode = (ForwardNode) entry.value;
-                oldValue = forwardNode.getCurrentValue(false);
-                forwardNode.newValue.set(ForwardNode.REMOVED_SIGNAL); // 标记为删除
-                forwardNode.operation.set(ForwardType.REMOVE);
+        synchronized (this) {
+            if(rehashIndex != -1) rehashStep();
+
+            DictEntry<K,V> entry = find(key);
+            if(entry == null) return null;
+
+            Object oldValue = entry.value;
+            
+            // 如果正在创建快照
+            if(isSnapshotting.get()) {
+                if(entry.value instanceof ForwardNode) {
+                    ForwardNode forwardNode = (ForwardNode) entry.value;
+                    oldValue = forwardNode.getCurrentValue(false);
+                    forwardNode.newValue.set(ForwardNode.REMOVED_SIGNAL); // 标记为删除
+                    forwardNode.operation.set(ForwardType.REMOVE);
+                } else {
+                    // 创建新的ForwardNode，标记为删除
+                    oldValue = entry.value;
+                    entry.value = new ForwardNode(entry.value, ForwardNode.REMOVED_SIGNAL, ForwardType.REMOVE);
+                    modifiedKeys.add(key); // 记录被修改的key
+                }
             } else {
-                // 创建新的ForwardNode，标记为删除
-                oldValue = entry.value;
-                entry.value = new ForwardNode(entry.value, ForwardNode.REMOVED_SIGNAL, ForwardType.REMOVE);
-                modifiedKeys.add(key); // 记录被修改的key
+                // 不在快照期间，直接删除
+                removeEntryFromTable(key);
             }
-        } else {
-            // 不在快照期间，直接删除
-            removeEntryFromTable(key);
+            
+            return (V) oldValue;
         }
-        
-        return (V) oldValue;
     }
     
     private void removeEntryFromTable(K key) {
