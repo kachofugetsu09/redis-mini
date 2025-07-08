@@ -2,11 +2,15 @@ package site.hnfy258.raft;
 
 import lombok.Getter;
 import lombok.Setter;
+import lombok.extern.slf4j.Slf4j;
 import site.hnfy258.config.RaftConfig;
 import site.hnfy258.core.AppendResult;
 import site.hnfy258.core.LogEntry;
+import site.hnfy258.core.RedisCore;
 import site.hnfy258.core.RoleState;
 import site.hnfy258.network.RaftNetwork;
+import site.hnfy258.protocal.BulkString;
+import site.hnfy258.protocal.Resp;
 import site.hnfy258.protocal.RespArray;
 import site.hnfy258.rpc.*;
 
@@ -46,6 +50,14 @@ public class Raft {
 
     private RaftConfig config;
 
+    //逻辑数据库
+    private RedisCore redisCore;
+
+    // Applier线程相关
+    private Thread applierThread;
+    private volatile boolean applierRunning = false;
+    private final Object applierLock = new Object(); // 专门用于applier的锁
+
     /**
      * -- SETTER --
      *  设置RaftNode引用
@@ -55,7 +67,7 @@ public class Raft {
 
     private final Object lock = new Object(); // 锁对象，用于同步
 
-    public Raft(int selfId, int[] peerIds, RaftNetwork network) {
+    public Raft(int selfId, int[] peerIds, RaftNetwork network,RedisCore redisCore) {
         this.selfId = selfId;
         this.network = network;
         this.peerIds = new ArrayList<>();
@@ -78,8 +90,19 @@ public class Raft {
         }
         this.lastHeartbeatTime = System.currentTimeMillis();
         this.voteCount = 0;
+        this.redisCore = redisCore;
+        
+        // 启动applier线程
+        if (this.redisCore != null) {
+            startApplier();
+        }
+        
         //todo 读取持久化状态
 
+    }
+
+    public Raft(int selfId, int[] peerIds, RaftNetwork network) {
+        this(selfId, peerIds, network, null);
     }
 
 
@@ -392,7 +415,9 @@ public class Raft {
             int lastNewEntryIndex = args.prevLogIndex + args.entries.size();
             commitIndex = Math.min(args.leaderCommit, lastNewEntryIndex);
             System.out.println("更新 commitIndex: " + oldCommitIndex + " -> " + commitIndex);
-
+            
+            // 通知applier线程有新的提交
+            notifyApplier();
         }
         reply.success = true;
         reply.xLen = log.size();
@@ -511,6 +536,9 @@ public class Raft {
                 if(count >= peerIds.size()/2 +1){
                     System.out.println("提交日志条目到索引 " + n + "，当前任期: " + currentTerm);
                     commitIndex = n;
+                    
+                    // 通知applier线程有新的提交
+                    notifyApplier();
                     return;
                 }else{
                     System.out.println("无法提交日志条目到索引 " + n + "，需要更多投票，当前投票数: " + count);
@@ -581,6 +609,250 @@ public class Raft {
         result.setNewLogIndex(newEntry.getLogIndex());
         result.setSuccess(true);
         return result;
+    }
+
+    /**
+     * 启动applier线程
+     */
+    private void startApplier() {
+        if (applierRunning) {
+            return;
+        }
+        
+        applierRunning = true;
+        applierThread = Thread.ofVirtual().name("raft-applier-" + selfId).start(this::applierLoop);
+        System.out.println("Node " + selfId + " applier线程已启动");
+    }
+
+    /**
+     * 停止applier线程
+     */
+    public void stopApplier() {
+        applierRunning = false;
+        if (applierThread != null) {
+            synchronized (applierLock) {
+                applierLock.notifyAll(); // 唤醒可能在等待的applier线程
+            }
+            try {
+                applierThread.join(1000); // 等待最多1秒
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    /**
+     * 通知applier线程有新的提交
+     */
+    private void notifyApplier() {
+        if (applierRunning) {
+            synchronized (applierLock) {
+                applierLock.notify();
+            }
+        }
+    }
+    
+    /**
+     * 通知applier线程有新的提交（公开方法，用于测试）
+     */
+    public void notifyApplierForTest() {
+        notifyApplier();
+    }
+    
+    /**
+     * 设置commitIndex（用于测试）
+     */
+    public void setCommitIndex(int commitIndex) {
+        this.commitIndex = commitIndex;
+    }
+    
+    /**
+     * 获取RedisCore实例（用于测试）
+     */
+    public RedisCore getRedisCore() {
+        return redisCore;
+    }
+
+    /**
+     * applier主循环
+     */
+    private void applierLoop() {
+        while (applierRunning) {
+            try {
+                // 检查是否有新的日志条目需要应用
+                boolean hasWork = false;
+                synchronized (lock) {
+                    hasWork = lastApplied < commitIndex;
+                }
+                
+                if (!hasWork) {
+                    // 没有工作，等待通知
+                    synchronized (applierLock) {
+                        try {
+                            applierLock.wait(100); // 最多等待100ms，避免死锁
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            break;
+                        }
+                    }
+                    continue;
+                }
+                
+                // 应用日志条目
+                applyLogEntries();
+                
+            } catch (Exception e) {
+                System.err.println("Node " + selfId + " applier线程发生错误: " + e.getMessage());
+                e.printStackTrace();
+                // 发生错误时短暂休息，避免CPU占用过高
+                try {
+                    Thread.sleep(50);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        }
+        System.out.println("Node " + selfId + " applier线程已停止");
+    }
+
+    /**
+     * 应用日志条目到状态机
+     */
+    private void applyLogEntries() {
+        List<LogEntry> toApply = new ArrayList<>();
+        
+        synchronized (lock) {
+            // 收集需要应用的日志条目
+            while (lastApplied < commitIndex) {
+                lastApplied++;
+                int applyIndex = lastApplied;
+                
+                if (applyIndex >= log.size()) {
+                    System.err.println("Node " + selfId + " 日志索引越界，lastApplied: " + lastApplied + ", log.size(): " + log.size());
+                    lastApplied--; // 回滚
+                    break;
+                }
+                
+                LogEntry entry = log.get(applyIndex);
+                if (entry.getCommand() != null) {
+                    toApply.add(entry);
+                }
+            }
+        }
+        
+        // 在锁外执行状态机操作，避免长时间持锁
+        for (LogEntry entry : toApply) {
+            try {
+                applyLogEntry(entry);
+            } catch (Exception e) {
+                System.err.println("Node " + selfId + " 应用日志条目失败: " + entry + ", 错误: " + e.getMessage());
+                // 可以选择回滚或者继续，这里选择继续
+            }
+        }
+    }
+
+    /**
+     * 应用单个日志条目
+     */
+    private void applyLogEntry(LogEntry entry) {
+        if (redisCore == null) {
+            return;
+        }
+        
+        RespArray command = entry.getCommand();
+        if (command == null || command.getContent() == null || command.getContent().length == 0) {
+            return;
+        }
+        
+        try {
+            // 解析命令
+            final String commandName = ((BulkString) command.getContent()[0])
+                    .getContent().getString().toUpperCase();
+            final Resp[] content = command.getContent();
+            final String[] args = new String[content.length - 1];
+            
+            for (int i = 1; i < content.length; i++) {
+                if (content[i] instanceof BulkString) {
+                    args[i - 1] = ((BulkString) content[i]).getContent().getString();
+                } else {
+                    System.err.println("Node " + selfId + " 日志条目参数类型不正确: " + content[i].getClass().getSimpleName());
+                    return;
+                }
+            }
+            
+            // 执行命令
+            boolean success = redisCore.executeCommand(commandName, args);
+            if (success) {
+                System.out.println("Node " + selfId + " 成功应用日志条目 " + entry.getLogIndex() + 
+                                 ": " + commandName + " " + String.join(" ", args));
+            } else {
+                System.err.println("Node " + selfId + " 应用日志条目失败 " + entry.getLogIndex() + 
+                                 ": " + commandName + " " + String.join(" ", args));
+            }
+            
+        } catch (Exception e) {
+            System.err.println("Node " + selfId + " 解析或执行日志条目时发生异常: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    public void applier(){
+       Thread.ofVirtual().start( ()->{
+           for(;;){
+               synchronized (lock){
+                   if(lastApplied >=commitIndex){
+                       try {
+                           lock.wait();
+                           Thread.sleep(10);
+                           continue;
+                       } catch (InterruptedException e) {
+                           throw new RuntimeException(e);
+                       }
+                   }
+                   while(lastApplied <commitIndex){
+                       lastApplied++;
+                       int applyIndex = lastApplied;
+
+                       if(applyIndex >= log.size()){
+                            System.out.println("没有更多日志条目可以应用，当前 lastApplied: " + lastApplied);
+                            lastApplied --; //回滚
+                            break;
+                       }
+
+                       if(log.get(applyIndex).getCommand()!=null){
+                           RespArray command = log.get(applyIndex).getCommand();
+                           final String commandName = ((BulkString) command.getContent()[0])
+                                   .getContent().getString().toUpperCase();
+                           final Resp[] content = command.getContent();
+                           final String[] args = new String[content.length - 1];
+                           for (int i = 1; i < content.length; i++) {
+                               if (content[i] instanceof BulkString) {
+                                   args[i - 1] = ((BulkString) content[i]).getContent().getString();
+                               }
+                               else{
+                                   System.out.println("日志条目 " + applyIndex + " 的参数类型不正确，无法应用");
+                                   throw new RuntimeException("日志条目 " + applyIndex + " 的参数类型不正确，无法应用");
+                               }
+                           }
+                           boolean result = redisCore.executeCommand(commandName, args);
+                            if(!result) {
+                                System.out.println("日志条目 " + applyIndex + " 执行失败，命令: " + commandName + ", 参数: " + String.join(", ", args));
+                                throw new RuntimeException("日志条目 " + applyIndex + " 执行失败，命令: " + commandName + ", 参数: " + String.join(", ", args));
+                            }
+                            return;
+
+                       }
+                   }
+               }
+
+               try {
+                   Thread.sleep(10);
+               } catch (InterruptedException e) {
+                   throw new RuntimeException(e);
+               }
+           }
+       });
     }
 
     public void replicationLogEntries(){
@@ -722,5 +994,19 @@ public class Raft {
      */
     public boolean isLeader() {
         return state == RoleState.LEADER;
+    }
+
+    /**
+     * 获取lastApplied（用于测试）
+     */
+    public int getLastApplied() {
+        return lastApplied;
+    }
+    
+    /**
+     * 获取commitIndex（用于测试）
+     */
+    public int getCommitIndex() {
+        return commitIndex;
     }
 }

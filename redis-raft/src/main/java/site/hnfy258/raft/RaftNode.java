@@ -69,6 +69,9 @@ public class RaftNode {
         
         started = false;
         
+        // 停止applier线程
+        raft.stopApplier();
+        
         // 停止定时器
         stopElectionTimer();
         stopHeartbeatTimer();
