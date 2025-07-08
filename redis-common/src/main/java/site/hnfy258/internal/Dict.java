@@ -489,9 +489,8 @@ public class Dict<K,V> {
     }
 
     public int size(){
-        synchronized (this) {
+        {
             int count = 0;
-            System.out.println("=== size()方法开始计算 ===");
             
             // 遍历 ht0
             for(int i = 0; i < ht0.size; i++) {
@@ -502,7 +501,6 @@ public class Dict<K,V> {
                         ForwardNode forwardNode = (ForwardNode) value;
                         // 主线程看到的是新值
                         value = forwardNode.getCurrentValue(false);
-                        System.out.println("size()中遇到ForwardNode: key=" + entry.key + ", 新值=" + value);
                     }
                     if(value != null) {
                         count++;
@@ -523,19 +521,13 @@ public class Dict<K,V> {
                             ForwardNode forwardNode = (ForwardNode) value;
                             // 主线程看到的是新值
                             value = forwardNode.getCurrentValue(false);
-                            System.out.println("size()中遇到ForwardNode(ht1): key=" + entry.key + ", 新值=" + value);
                         }
-                        if(value != null) {
-                            count++;
-                        } else {
-                            System.out.println("size()中发现null值(ht1): key=" + entry.key);
-                        }
+
                         entry = entry.next;
                     }
                 }
             }
-            
-            System.out.println("=== size()方法结束，总计=" + count + " ===");
+
             return count;
         }
     }

@@ -15,6 +15,7 @@ import site.hnfy258.datastructure.RedisString;
 import site.hnfy258.internal.Sds;
 
 import java.io.File;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
@@ -70,7 +71,7 @@ public class snapshotTest {
 
             // 每1000万个数据输出一次进度
             if ((i + 1) % 10000 == 0) {
-                log.info("已写入 {} 个数据", i + 1);
+                log.info("已写入 {} 个数据", Optional.of(i + 1));
             }
         }
 
