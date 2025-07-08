@@ -3,6 +3,8 @@ package site.hnfy258.protocal;
 import io.netty.buffer.ByteBuf;
 import lombok.Getter;
 
+import java.io.Serializable;
+
 /**
  * Redis数组类型
  * 
@@ -34,7 +36,7 @@ import lombok.Getter;
  * @since 1.0.0
  */
 @Getter
-public class RespArray extends Resp {
+public class RespArray extends Resp implements Serializable {
     /** null数组的RESP编码 */
     private static final byte[] NULL_ARRAY_BYTES = "*-1\r\n".getBytes();
     

@@ -38,6 +38,13 @@
             <version>${project.version}</version>
         </dependency>
 
+        <!-- 依赖 redis-raft 模块 - 强一致性支持 -->
+        <dependency>
+            <groupId>site.hnfy258</groupId>
+            <artifactId>redis-raft</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
         <!-- 依赖 redis-protocal 模块 -->
         <dependency>
             <groupId>site.hnfy258</groupId>

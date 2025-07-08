@@ -4,6 +4,8 @@ import io.netty.buffer.ByteBuf;
 import lombok.Getter;
 import site.hnfy258.datastructure.RedisBytes;
 
+import java.io.Serializable;
+
 /**
  * Redis批量字符串类型
  * 
@@ -30,7 +32,7 @@ import site.hnfy258.datastructure.RedisBytes;
  * @since 1.0.0
  */
 @Getter
-public class BulkString extends Resp {
+public class BulkString extends Resp implements Serializable {
     /** 空值的RESP编码 */
     public static final byte[] NULL_BYTES = "$-1\r\n".getBytes();
     

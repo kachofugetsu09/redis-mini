@@ -3,6 +3,8 @@ package site.hnfy258.protocal;
 import io.netty.buffer.ByteBuf;
 import lombok.extern.slf4j.Slf4j;
 
+import java.io.Serializable;
+
 /**
  * Redis协议基础类
  * 
@@ -37,7 +39,7 @@ import lombok.extern.slf4j.Slf4j;
  * @since 1.0.0
  */
 @Slf4j
-public abstract class Resp {
+public abstract class Resp implements Serializable {
     /** 行结束符 */
     public static final byte[] CRLF = "\r\n".getBytes();
     
