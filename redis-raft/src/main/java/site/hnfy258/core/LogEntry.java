@@ -10,6 +10,7 @@ import java.io.Serializable;
 @AllArgsConstructor
 @Getter
 @Setter
+@Builder
 public class LogEntry implements Serializable {
     private int logIndex;
     private int logTerm;

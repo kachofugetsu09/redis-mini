@@ -27,11 +27,11 @@ import static org.assertj.core.api.Assertions.fail;
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 public class Raft3BTest {
     
-    // 测试配置常量 - 为真实网络环境优化
-    private static final int ELECTION_TIMEOUT = 2000; // ms - 增加到2秒
+    // 测试配置常量 - 与Raft核心和RaftNode保持一致的真实网络参数
+    private static final int ELECTION_TIMEOUT = 8000; // ms - 与Raft3CTest保持一致
     private static final int SMALL_CLUSTER_SIZE = 3;
     private static final int LARGE_CLUSTER_SIZE = 5;
-    private static final int AGREEMENT_TIMEOUT = 8000; // 15秒等待一致性，真实网络需要更长时间
+    private static final int AGREEMENT_TIMEOUT = 20000; // ms - 与网络延迟和持久化保持一致
     
     // 测试实例变量
     private List<RaftNode> nodes;
@@ -520,11 +520,11 @@ public class Raft3BTest {
             nodes.get(i).start();
             System.out.println("Raft server started on 127.0.0.1:" + ports.get(i));
             System.out.println("Raft node " + nodeIds.get(i) + " started");
-            Thread.sleep(200); // 增加启动间隔
+            Thread.sleep(500); // 增加启动间隔以适应真实网络
         }
         
         System.out.println("Cluster setup complete with " + size + " nodes");
-        Thread.sleep(3000); // 等待3秒让网络连接完全建立并完成首轮选举
+        Thread.sleep(ELECTION_TIMEOUT + 2000); // 等待至少一个选举周期完成
     }
     
     /**

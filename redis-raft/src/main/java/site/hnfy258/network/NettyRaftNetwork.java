@@ -121,13 +121,13 @@ public class NettyRaftNetwork implements RaftNetwork {
                     }
                 });
                 
-                // 设置超时 - 为Raft优化，使用较短的超时时间
+                // 设置超时 - 真实网络环境需要更长的超时时间
                 channel.eventLoop().schedule(() -> {
                     CompletableFuture<Object> timeoutFuture = pendingRequests.remove(requestId);
                     if (timeoutFuture != null) {
                         timeoutFuture.completeExceptionally(new RuntimeException("Request timeout"));
                     }
-                }, 500, java.util.concurrent.TimeUnit.MILLISECONDS); // 500ms超时
+                }, 2000, java.util.concurrent.TimeUnit.MILLISECONDS); // 2秒超时，适应网络延迟
             } else {
                 future.completeExceptionally(new RuntimeException("Connection not available"));
             }

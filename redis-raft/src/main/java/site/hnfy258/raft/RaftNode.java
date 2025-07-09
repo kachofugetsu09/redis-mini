@@ -24,10 +24,10 @@ public class RaftNode {
     private ScheduledFuture<?> electionTimer;
     private ScheduledFuture<?> heartbeatTimer;
 
-    // 超时时间配置 - 为真实网络环境优化
-    private final int MIN_ELECTION_TIMEOUT = 1000; // ms - 增加到1秒
-    private final int MAX_ELECTION_TIMEOUT = 2000; // ms - 增加到2秒
-    private final int HEARTBEAT_INTERVAL = 200; // ms - 增加到200ms
+    // 超时时间配置 - 真实网络环境优化
+    private final int MIN_ELECTION_TIMEOUT = 3000; // ms - 3秒，考虑网络延迟和GC
+    private final int MAX_ELECTION_TIMEOUT = 6000; // ms - 6秒，保证稳定性
+    private final int HEARTBEAT_INTERVAL = 500; // ms - 500ms，适应网络延迟
 
     private boolean started = false;
 

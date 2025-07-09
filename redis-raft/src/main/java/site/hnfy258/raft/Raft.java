@@ -1,14 +1,18 @@
 package site.hnfy258.raft;
 
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
 import lombok.Getter;
 import lombok.Setter;
 import site.hnfy258.core.AppendResult;
 import site.hnfy258.core.LogEntry;
 import site.hnfy258.core.RoleState;
 import site.hnfy258.network.RaftNetwork;
+import site.hnfy258.persistence.LogSerializer;
 import site.hnfy258.protocal.RespArray;
 import site.hnfy258.rpc.*;
 
+import java.io.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -39,7 +43,7 @@ public class Raft {
     // 选举超时相关
     private long lastHeartbeatTime;
     private int electionTimeout;
-    private final int heartbeatInterval = 200; // 心跳间隔 200ms，适配真实网络
+    private final int heartbeatInterval = 500; // 心跳间隔 500ms，适应真实网络延迟
 
     // 投票统计
     private int voteCount;
@@ -77,12 +81,14 @@ public class Raft {
         this.lastHeartbeatTime = System.currentTimeMillis();
         this.electionTimeout = generateElectionTimeout();
         this.voteCount = 0;
-        //todo 读取持久化状态
+        // 读取持久化状态
+        loadPersistedState();
     }
 
     private int generateElectionTimeout() {
-        // 为真实网络环境优化：选举超时时间为 1000-2000ms 之间的随机值
-        return ThreadLocalRandom.current().nextInt(1000, 2000);
+        // 真实网络环境：选举超时时间应该是心跳间隔的5-10倍
+        // 考虑网络延迟(10-50ms) + GC暂停(50-200ms) + 处理时间(10-50ms)
+        return ThreadLocalRandom.current().nextInt(3000, 6000); // 3-6秒，保证稳定性
     }
 
     /**
@@ -166,9 +172,6 @@ public class Raft {
         }
     }
 
-    public boolean isElectionTimeout() {
-        return System.currentTimeMillis() - lastHeartbeatTime > electionTimeout;
-    }
 
     public synchronized boolean handleRequestVoteReply(int serverId,
                                                        int requestTerm,
@@ -294,6 +297,7 @@ public class Raft {
             state = RoleState.FOLLOWER; // 转为跟随者状态
             votedFor = -1; // 重置投票状态
             //todo 持久化
+            persist();
         }
 
         // 重置心跳和选举超时
@@ -374,6 +378,7 @@ public class Raft {
                     System.out.println("追加日志条目: " + args.entries.get(i));
                 }
                 //todo 持久化日志
+                persist();
             }
         }
         else{
@@ -383,6 +388,7 @@ public class Raft {
                 log.clear();
                 log.addAll(subList);
                 //todo 持久化日志
+                persist();
 
             }
         }
@@ -464,6 +470,7 @@ public class Raft {
                                 votedFor = -1;
                                 resetElectionTimeout();
                                 //todo 持久化
+                                persist();
                             }
                             else if(reply.success){
                                 nextIndex[peerId] = finalArgs.prevLogIndex + finalArgs.entries.size() +1;
@@ -559,10 +566,12 @@ public class Raft {
 
         log.add(newEntry);
         //todo 持久化日志
+        persist();
 
         if(state != RoleState.LEADER || currentTerm !=curTerm){
             log.removeLast();
             //todo 持久化回滚
+            persist();
             System.out.println("当前状态不是领导者或任期已变更，无法添加日志条目");
             result.setCurrentTerm(currentTerm);
             result.setNewLogIndex(-1);
@@ -660,6 +669,88 @@ public class Raft {
             return null;
         });
     }
+
+    public void persist(){
+        try(FileOutputStream fos = new FileOutputStream(new File("node-"+selfId));
+            DataOutputStream dos = new DataOutputStream(fos)){
+            
+            // 持久化Raft状态
+            dos.writeInt(currentTerm);
+            dos.writeInt(votedFor);
+
+            // 持久化日志
+            ByteBuf logBuffer = LogSerializer.serializeList(log);
+            byte[] logBytes = new byte[logBuffer.readableBytes()];
+            logBuffer.readBytes(logBytes);
+            dos.write(logBytes);
+            logBuffer.release(); // 释放 ByteBuf
+
+            dos.flush(); // 确保数据写入磁盘
+            System.out.println("Raft状态和日志持久化成功。");
+
+        }catch(Exception e){
+            System.err.println("持久化Raft状态失败: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    private void loadPersistedState() {
+        File stateFile = new File("node-" + selfId);
+        if (!stateFile.exists()) {
+            System.out.println("没有找到持久化状态文件，从头开始。");
+            return;
+        }
+
+        try (FileInputStream fis = new FileInputStream(stateFile);
+             DataInputStream dis = new DataInputStream(fis)) {
+
+            // 读取Raft状态
+            this.currentTerm = dis.readInt();
+            this.votedFor = dis.readInt();
+
+            // 读取日志数据
+            byte[] logBytes = dis.readAllBytes(); // 读取剩余的所有字节作为日志数据
+            if (logBytes.length > 0) {
+                ByteBuf logBuffer = Unpooled.wrappedBuffer(logBytes); // 将字节数组包装成 ByteBuf
+                this.log.clear(); // 清除旧的日志
+                
+                List<LogEntry> loadedLog = LogSerializer.deSerializeList(logBuffer);
+                this.log.addAll(loadedLog); // 反序列化并添加
+                logBuffer.release(); // 释放 ByteBuf
+            }
+
+            // 确保 dummy entry 存在
+            if (this.log.isEmpty() || this.log.getFirst().getLogIndex() != -1) {
+                this.log.addFirst(new LogEntry(-1, -1, null)); // 确保第一个是 dummy entry
+            }
+
+            // 根据恢复的日志，更新 nextIndex 和 matchIndex
+            // 这一步通常在成为 Leader 后才会完全初始化，但在 Follower 启动时也需要确保基本一致
+            for (int i = 0; i < peerIds.size(); i++) {
+                nextIndex[i] = log.size();
+                matchIndex[i] = 0; // Follower 启动时 matchIndex 默认为 0
+            }
+            int selfIndex = peerIds.indexOf(selfId);
+            if (selfIndex >= 0 && selfIndex < matchIndex.length) {
+                matchIndex[selfIndex] = getLastLogIndex();
+            }
+
+            System.out.println("Raft状态和日志加载成功。当前任期: " + currentTerm + ", 投票给: " + votedFor + ", 日志条目数量: " + log.size());
+
+        } catch (Exception e) {
+            System.err.println("加载Raft状态失败: " + e.getMessage());
+            e.printStackTrace();
+            // 考虑失败时的回滚或重新初始化策略
+        }
+    }
+
+
+
+
+
+
+
+
 
     // ======================== 公共接口方法 ========================
 

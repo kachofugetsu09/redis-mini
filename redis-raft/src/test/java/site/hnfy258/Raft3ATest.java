@@ -15,11 +15,12 @@ import static org.assertj.core.api.Assertions.fail;
  * 基于MIT 6.5840 Lab 3A测试的Java实现
  */
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
-public class RaftElectionTest {
+public class Raft3ATest {
     
-    // 测试配置常量 - 调整为真实网络环境，与RaftNode配置保持一致
-    private static final int ELECTION_TIMEOUT = 2000; // ms
-    private static final int HEARTBEAT_INTERVAL = 200; // ms - 与节点配置保持一致
+    // 测试配置常量 - 与Raft核心层和RaftNode层保持一致
+    private static final int ELECTION_TIMEOUT = 8000; // ms - 与其他测试保持一致
+    private static final int HEARTBEAT_INTERVAL = 500; // ms - 与RaftNode配置保持一致
+    private static final int AGREEMENT_TIMEOUT = 20000; // ms - 真实网络环境需要足够时间
     private static final int SMALL_CLUSTER_SIZE = 3;
     private static final int LARGE_CLUSTER_SIZE = 7;
     
@@ -284,12 +285,12 @@ public class RaftElectionTest {
         for (int i = 0; i < size; i++) {
             nodes.get(i).start();
             System.out.println("Node " + nodeIds.get(i) + " started on port " + ports.get(i));
-            Thread.sleep(100); // 错开启动时间
+            Thread.sleep(500); // 增加启动间隔以适应真实网络
         }
         
-        // 等待网络连接建立
-        System.out.println("Waiting for network connections to establish...");
-        Thread.sleep(1000);
+        // 等待网络连接建立和首轮选举完成
+        System.out.println("Waiting for network connections to establish and initial election...");
+        Thread.sleep(ELECTION_TIMEOUT + 2000); // 等待至少一个选举周期
     }
     
     /**
