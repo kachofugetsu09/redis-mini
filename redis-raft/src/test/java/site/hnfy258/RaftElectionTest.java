@@ -18,8 +18,8 @@ import static org.assertj.core.api.Assertions.fail;
 public class RaftElectionTest {
     
     // 测试配置常量 - 调整为真实网络环境，与RaftNode配置保持一致
-    private static final int ELECTION_TIMEOUT = 4000; // ms
-    private static final int HEARTBEAT_INTERVAL = 80; // ms - 与节点配置保持一致
+    private static final int ELECTION_TIMEOUT = 2000; // ms
+    private static final int HEARTBEAT_INTERVAL = 200; // ms - 与节点配置保持一致
     private static final int SMALL_CLUSTER_SIZE = 3;
     private static final int LARGE_CLUSTER_SIZE = 7;
     

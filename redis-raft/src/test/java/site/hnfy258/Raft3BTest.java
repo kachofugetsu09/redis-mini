@@ -29,10 +29,9 @@ public class Raft3BTest {
     
     // 测试配置常量 - 为真实网络环境优化
     private static final int ELECTION_TIMEOUT = 2000; // ms - 增加到2秒
-    private static final int HEARTBEAT_INTERVAL = 200; // ms - 增加到200ms
     private static final int SMALL_CLUSTER_SIZE = 3;
     private static final int LARGE_CLUSTER_SIZE = 5;
-    private static final int AGREEMENT_TIMEOUT = 15000; // 15秒等待一致性，真实网络需要更长时间
+    private static final int AGREEMENT_TIMEOUT = 8000; // 15秒等待一致性，真实网络需要更长时间
     
     // 测试实例变量
     private List<RaftNode> nodes;

@@ -2,24 +2,13 @@ package site.hnfy258.raft;
 
 import lombok.Getter;
 import lombok.Setter;
-import lombok.extern.slf4j.Slf4j;
-import site.hnfy258.aof.AofManager;
-import site.hnfy258.config.RaftConfig;
 import site.hnfy258.core.AppendResult;
 import site.hnfy258.core.LogEntry;
-import site.hnfy258.core.RedisCore;
 import site.hnfy258.core.RoleState;
 import site.hnfy258.network.RaftNetwork;
-import site.hnfy258.persistence.RaftLogManager;
-import site.hnfy258.protocal.BulkString;
-import site.hnfy258.protocal.Resp;
 import site.hnfy258.protocal.RespArray;
 import site.hnfy258.rpc.*;
 
-import java.io.DataInputStream;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -36,7 +25,6 @@ public class Raft {
     // Raft算法状态
     private int currentTerm; // 当前任期
     private int votedFor; // 当前任期内投票给的候选人ID
-    @Setter
     private final List<LogEntry> log; // 日志条目数组
     private RoleState state; // 当前角色状态
 
@@ -50,24 +38,11 @@ public class Raft {
 
     // 选举超时相关
     private long lastHeartbeatTime;
+    private int electionTimeout;
+    private final int heartbeatInterval = 200; // 心跳间隔 200ms，适配真实网络
 
     // 投票统计
     private int voteCount;
-
-    private RaftConfig config;
-
-    //逻辑数据库
-    private RedisCore redisCore;
-
-    // 持久化相关
-    private RaftLogManager raftLogManager;
-    private String raftStateFileName; // .log 文件名
-    private String raftLogFileName;   // .raof 文件名
-
-    // Applier线程相关
-    private Thread applierThread;
-    private volatile boolean applierRunning = false;
-    private final Object applierLock = new Object(); // 专门用于applier的锁
 
     /**
      * -- SETTER --
@@ -78,10 +53,7 @@ public class Raft {
 
     private final Object lock = new Object(); // 锁对象，用于同步
 
-    public Raft(int selfId, int[] peerIds,
-                RaftNetwork network,
-                RedisCore redisCore,
-                RaftLogManager raftLogManager) {
+    public Raft(int selfId, int[] peerIds, RaftNetwork network) {
         this.selfId = selfId;
         this.network = network;
         this.peerIds = new ArrayList<>();
@@ -103,128 +75,15 @@ public class Raft {
             matchIndex[i] = 0;
         }
         this.lastHeartbeatTime = System.currentTimeMillis();
+        this.electionTimeout = generateElectionTimeout();
         this.voteCount = 0;
-        this.redisCore = redisCore;
-        this.raftLogManager = raftLogManager;
-        
-        // 初始化持久化文件名
-        initializePersistenceFileNames();
-        
-        // 如果没有传入 raftLogManager，尝试创建一个
-        if (this.raftLogManager == null && this.redisCore != null) {
-            try {
-                this.raftLogManager = new RaftLogManager(raftLogFileName, redisCore, this);
-            } catch (Exception e) {
-                System.err.println("初始化 RaftLogManager 失败: " + e.getMessage());
-            }
-        }
-        
-        // 启动applier线程
-        if (this.redisCore != null) {
-            startApplier();
-        }
-        
-        // 读取持久化状态
-        loadPersistedState();
-
+        //todo 读取持久化状态
     }
 
-    public Raft(int selfId, int[] peerIds, RaftNetwork network) {
-        this(selfId, peerIds, network, null,null);
+    private int generateElectionTimeout() {
+        // 为真实网络环境优化：选举超时时间为 1000-2000ms 之间的随机值
+        return ThreadLocalRandom.current().nextInt(1000, 2000);
     }
-
-    /**
-     * 初始化持久化文件名
-     */
-    private void initializePersistenceFileNames() {
-        // 根据节点ID生成文件名
-        raftStateFileName = "node" + selfId + ".log";   // Raft状态文件
-        raftLogFileName = "node" + selfId + ".raof";    // Raft日志文件
-        
-        System.out.println("Node " + selfId + " 持久化文件名初始化:");
-        System.out.println("  状态文件: " + raftStateFileName);
-        System.out.println("  日志文件: " + raftLogFileName);
-    }
-
-    /**
-     * 加载持久化状态
-     */
-    private void loadPersistedState() {
-        try {
-            // 加载 Raft 状态信息
-            loadRaftState();
-            
-            // 加载 Raft 日志
-            loadRaftLog();
-            
-            System.out.println("Node " + selfId + " 持久化状态加载完成");
-            System.out.println("  当前任期: " + currentTerm);
-            System.out.println("  投票对象: " + votedFor);
-            System.out.println("  日志大小: " + log.size());
-            
-        } catch (Exception e) {
-            System.err.println("Node " + selfId + " 加载持久化状态失败: " + e.getMessage());
-            e.printStackTrace();
-        }
-    }
-
-    /**
-     * 加载 Raft 状态信息
-     */
-    private void loadRaftState() {
-        if (raftStateFileName == null) {
-            System.out.println("Node " + selfId + " Raft状态文件名未初始化，使用默认状态");
-            return;
-        }
-        
-        try (java.io.FileInputStream fis = new java.io.FileInputStream(raftStateFileName)) {
-            // 读取当前任期 (4字节，大端序)
-            int term = 0;
-            term |= (fis.read() & 0xFF) << 24;
-            term |= (fis.read() & 0xFF) << 16;
-            term |= (fis.read() & 0xFF) << 8;
-            term |= (fis.read() & 0xFF);
-            
-            // 读取投票对象 (4字节，大端序)
-            int voted = 0;
-            voted |= (fis.read() & 0xFF) << 24;
-            voted |= (fis.read() & 0xFF) << 16;
-            voted |= (fis.read() & 0xFF) << 8;
-            voted |= (fis.read() & 0xFF);
-            
-            // 更新状态
-            this.currentTerm = term;
-            this.votedFor = voted;
-            
-            System.out.println("Node " + selfId + " 成功加载Raft状态: term=" + currentTerm + ", votedFor=" + votedFor);
-            
-        } catch (java.io.FileNotFoundException e) {
-            System.out.println("Node " + selfId + " Raft状态文件不存在，使用默认状态");
-        } catch (Exception e) {
-            System.err.println("Node " + selfId + " 加载Raft状态失败: " + e.getMessage());
-            e.printStackTrace();
-        }
-    }
-
-    /**
-     * 加载 Raft 日志
-     */
-    private void loadRaftLog() {
-        if (raftLogManager != null) {
-            try {
-                raftLogManager.load();
-
-            } catch (Exception e) {
-                System.err.println("Node " + selfId + " 加载日志失败: " + e.getMessage());
-                e.printStackTrace();
-            }
-        } else {
-            System.out.println("Node " + selfId + " RaftLogManager 未初始化，跳过日志加载");
-        }
-    }
-
-
-
 
     /**
      * 重置选举超时时间
@@ -240,11 +99,12 @@ public class Raft {
         RequestVoteArg arg = new RequestVoteArg();
         synchronized (lock){
             if (state != RoleState.CANDIDATE){
+                lock.notifyAll();
                 return;
             }
             this.currentTerm++; // 增加当前任期
             this.votedFor = selfId; // 给自己投票
-            resetElectionTimeout();
+            this.resetElectionTimeout(); // 重置选举超时
 
             arg.candidateId = selfId;
             arg.term = currentTerm;
@@ -306,6 +166,9 @@ public class Raft {
         }
     }
 
+    public boolean isElectionTimeout() {
+        return System.currentTimeMillis() - lastHeartbeatTime > electionTimeout;
+    }
 
     public synchronized boolean handleRequestVoteReply(int serverId,
                                                        int requestTerm,
@@ -410,8 +273,6 @@ public class Raft {
 
 
 
-
-
     /**
      * 处理AppendEntries请求（心跳）
      * @param args 心跳请求参数
@@ -432,8 +293,7 @@ public class Raft {
             currentTerm = args.term;
             state = RoleState.FOLLOWER; // 转为跟随者状态
             votedFor = -1; // 重置投票状态
-            //持久化
-            persist();
+            //todo 持久化
         }
 
         // 重置心跳和选举超时
@@ -443,7 +303,7 @@ public class Raft {
         if (state == RoleState.CANDIDATE) {
             state = RoleState.FOLLOWER;
         }
-        
+
         reply.term = currentTerm;
 
         //2.reply false if log doesn't contain an entry at prevLogIndex whose term matches prevLogTerm
@@ -513,8 +373,7 @@ public class Raft {
                     log.add(args.entries.get(i));
                     System.out.println("追加日志条目: " + args.entries.get(i));
                 }
-                // 持久化日志
-                persist();
+                //todo 持久化日志
             }
         }
         else{
@@ -523,8 +382,7 @@ public class Raft {
                 List<LogEntry> subList = new ArrayList<>(log.subList(0, args.prevLogIndex + 1));
                 log.clear();
                 log.addAll(subList);
-                // 持久化日志
-                persist();
+                //todo 持久化日志
 
             }
         }
@@ -535,9 +393,7 @@ public class Raft {
             int lastNewEntryIndex = args.prevLogIndex + args.entries.size();
             commitIndex = Math.min(args.leaderCommit, lastNewEntryIndex);
             System.out.println("更新 commitIndex: " + oldCommitIndex + " -> " + commitIndex);
-            
-            // 通知applier线程有新的提交
-            notifyApplier();
+
         }
         reply.success = true;
         reply.xLen = log.size();
@@ -557,8 +413,6 @@ public class Raft {
             return;
         }
 
-        // 每次发送心跳时重置自己的选举超时时间
-        resetElectionTimeout();
 
         for (Integer peerId : peerIds) {
             if (peerId == selfId) {
@@ -609,8 +463,7 @@ public class Raft {
                                 state = RoleState.FOLLOWER;
                                 votedFor = -1;
                                 resetElectionTimeout();
-                                // 持久化
-                                persist();
+                                //todo 持久化
                             }
                             else if(reply.success){
                                 nextIndex[peerId] = finalArgs.prevLogIndex + finalArgs.entries.size() +1;
@@ -632,7 +485,6 @@ public class Raft {
                     })
                     .exceptionally(throwable -> {
                         System.err.println("Failed to send heartbeat to node " + peerId + ": " + throwable.getMessage());
-                        // 网络错误时不要放弃，尝试继续发送
                         return null;
                     });
         }
@@ -656,9 +508,6 @@ public class Raft {
                 if(count >= peerIds.size()/2 +1){
                     System.out.println("提交日志条目到索引 " + n + "，当前任期: " + currentTerm);
                     commitIndex = n;
-                    
-                    // 通知applier线程有新的提交
-                    notifyApplier();
                     return;
                 }else{
                     System.out.println("无法提交日志条目到索引 " + n + "，需要更多投票，当前投票数: " + count);
@@ -709,13 +558,11 @@ public class Raft {
         LogEntry newEntry = new LogEntry(log.size(), curTerm, command);
 
         log.add(newEntry);
-        // 持久化日志
-        persist();
+        //todo 持久化日志
 
         if(state != RoleState.LEADER || currentTerm !=curTerm){
             log.removeLast();
-            //持久化回滚
-            persist();
+            //todo 持久化回滚
             System.out.println("当前状态不是领导者或任期已变更，无法添加日志条目");
             result.setCurrentTerm(currentTerm);
             result.setNewLogIndex(-1);
@@ -729,190 +576,6 @@ public class Raft {
         result.setNewLogIndex(newEntry.getLogIndex());
         result.setSuccess(true);
         return result;
-    }
-
-    /**
-     * 启动applier线程
-     */
-    private void startApplier() {
-        if (applierRunning) {
-            return;
-        }
-        
-        applierRunning = true;
-        applierThread = Thread.ofVirtual().name("raft-applier-" + selfId).start(this::applierLoop);
-        System.out.println("Node " + selfId + " applier线程已启动");
-    }
-
-    /**
-     * 停止applier线程
-     */
-    public void stopApplier() {
-        applierRunning = false;
-        if (applierThread != null) {
-            synchronized (applierLock) {
-                applierLock.notifyAll(); // 唤醒可能在等待的applier线程
-            }
-            try {
-                applierThread.join(1000); // 等待最多1秒
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-        }
-    }
-
-    /**
-     * 通知applier线程有新的提交
-     */
-    private void notifyApplier() {
-        if (applierRunning) {
-            synchronized (applierLock) {
-                applierLock.notify();
-            }
-        }
-    }
-    
-    /**
-     * 通知applier线程有新的提交（公开方法，用于测试）
-     */
-    public void notifyApplierForTest() {
-        notifyApplier();
-    }
-    
-    /**
-     * 设置commitIndex（用于测试）
-     */
-    public void setCommitIndex(int commitIndex) {
-        this.commitIndex = commitIndex;
-    }
-    
-    /**
-     * 获取RedisCore实例（用于测试）
-     */
-    public RedisCore getRedisCore() {
-        return redisCore;
-    }
-
-    /**
-     * applier主循环
-     */
-    private void applierLoop() {
-        while (applierRunning) {
-            try {
-                // 检查是否有新的日志条目需要应用
-                boolean hasWork = false;
-                synchronized (lock) {
-                    hasWork = lastApplied < commitIndex;
-                }
-                
-                if (!hasWork) {
-                    // 没有工作，等待通知
-                    synchronized (applierLock) {
-                        try {
-                            applierLock.wait(100); // 最多等待100ms，避免死锁
-                        } catch (InterruptedException e) {
-                            Thread.currentThread().interrupt();
-                            break;
-                        }
-                    }
-                    continue;
-                }
-                
-                // 应用日志条目
-                applyLogEntries();
-                
-            } catch (Exception e) {
-                System.err.println("Node " + selfId + " applier线程发生错误: " + e.getMessage());
-                e.printStackTrace();
-                // 发生错误时短暂休息，避免CPU占用过高
-                try {
-                    Thread.sleep(50);
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                    break;
-                }
-            }
-        }
-        System.out.println("Node " + selfId + " applier线程已停止");
-    }
-
-    /**
-     * 应用日志条目到状态机
-     */
-    private void applyLogEntries() {
-        List<LogEntry> toApply = new ArrayList<>();
-        
-        synchronized (lock) {
-            // 收集需要应用的日志条目
-            while (lastApplied < commitIndex) {
-                lastApplied++;
-                int applyIndex = lastApplied;
-                
-                if (applyIndex >= log.size()) {
-                    System.err.println("Node " + selfId + " 日志索引越界，lastApplied: " + lastApplied + ", log.size(): " + log.size());
-                    lastApplied--; // 回滚
-                    break;
-                }
-                
-                LogEntry entry = log.get(applyIndex);
-                if (entry.getCommand() != null) {
-                    toApply.add(entry);
-                }
-            }
-        }
-        
-        // 在锁外执行状态机操作，避免长时间持锁
-        for (LogEntry entry : toApply) {
-            try {
-                applyLogEntry(entry);
-            } catch (Exception e) {
-                System.err.println("Node " + selfId + " 应用日志条目失败: " + entry + ", 错误: " + e.getMessage());
-                // 可以选择回滚或者继续，这里选择继续
-            }
-        }
-    }
-
-    /**
-     * 应用单个日志条目
-     */
-    private void applyLogEntry(LogEntry entry) {
-        if (redisCore == null) {
-            return;
-        }
-        
-        RespArray command = entry.getCommand();
-        if (command == null || command.getContent() == null || command.getContent().length == 0) {
-            return;
-        }
-        
-        try {
-            // 解析命令
-            final String commandName = ((BulkString) command.getContent()[0])
-                    .getContent().getString().toUpperCase();
-            final Resp[] content = command.getContent();
-            final String[] args = new String[content.length - 1];
-            
-            for (int i = 1; i < content.length; i++) {
-                if (content[i] instanceof BulkString) {
-                    args[i - 1] = ((BulkString) content[i]).getContent().getString();
-                } else {
-                    System.err.println("Node " + selfId + " 日志条目参数类型不正确: " + content[i].getClass().getSimpleName());
-                    return;
-                }
-            }
-            
-            // 执行命令
-            boolean success = redisCore.executeCommand(commandName, args);
-            if (success) {
-                System.out.println(STR."Node \{selfId} 成功应用日志条目 \{entry.getLogIndex()}: \{commandName} \{String.join(" ", args)}");
-            } else {
-                System.err.println(STR."Node \{selfId} 应用日志条目失败 \{entry.getLogIndex()}: \{commandName} \{String.join(" ", args)}");
-            }
-            
-        } catch (Exception e) {
-            System.err.println("Node " + selfId + " 解析或执行日志条目时发生异常: " + e.getMessage());
-            e.printStackTrace();
-        }
     }
 
     public void replicationLogEntries(){
@@ -996,100 +659,59 @@ public class Raft {
             System.err.println("Failed to send AppendEntries to node " + peerId + ": " + throwable.getMessage());
             return null;
         });
-
-
     }
 
-    public void persist(){
-        writeRaftInfo();
-        writeLog();
+    // ======================== 公共接口方法 ========================
+
+    /**
+     * 获取当前提交索引
+     */
+    public int getCommitIndex() {
+        return commitIndex;
     }
 
     /**
-     * 写入 Raft 日志到文件
+     * 获取当前任期
      */
-    public void writeLog(){
-        if(raftLogManager == null){
-            System.err.println("Node " + selfId + " RaftLogManager 未初始化，无法写入日志");
-            return;
-        }
-
-        Thread.ofVirtual().start(()->{
-            try{
-                for(LogEntry entry : log){
-                    raftLogManager.write(entry);
-                }
-                System.out.println("Node " + selfId + " 成功写入日志到文件，日志大小: " + log.size());
-            }catch(Exception e){
-                System.err.println("Node " + selfId + " 写入日志失败: " + e.getMessage());
-                e.printStackTrace();
-            }
-        });
+    public int getCurrentTerm() {
+        return currentTerm;
     }
 
     /**
-     * 增量写入单个日志条目
+     * 获取当前状态
      */
-    public void appendLogEntry(LogEntry entry) {
-        if(raftLogManager == null){
-            System.err.println("Node " + selfId + " RaftLogManager 未初始化，无法写入日志条目");
-            return;
-        }
-
-        Thread.ofVirtual().start(()->{
-            try{
-                raftLogManager.write(entry);
-                System.out.println("Node " + selfId + " 成功追加日志条目: " + entry.getLogIndex());
-            }catch(Exception e){
-                System.err.println("Node " + selfId + " 追加日志条目失败: " + e.getMessage());
-                e.printStackTrace();
-            }
-        });
+    public RoleState getState() {
+        return state;
     }
 
-    private void writeRaftInfo() {
-        if (raftStateFileName == null) {
-            System.err.println("Node " + selfId + " Raft状态文件名未初始化");
-            return;
-        }
-        
-        Thread.ofVirtual().start(()->{
-           try(FileOutputStream fos = new FileOutputStream(raftStateFileName)){
-               // 写入当前任期 (4字节，大端序)
-               fos.write((currentTerm >>> 24) & 0xFF);
-               fos.write((currentTerm >>> 16) & 0xFF);
-               fos.write((currentTerm >>> 8) & 0xFF);
-               fos.write(currentTerm & 0xFF);
-               
-               // 写入投票对象 (4字节，大端序)
-               fos.write((votedFor >>> 24) & 0xFF);
-               fos.write((votedFor >>> 16) & 0xFF);
-               fos.write((votedFor >>> 8) & 0xFF);
-               fos.write(votedFor & 0xFF);
-               
-               fos.flush();
-               System.out.println("Node " + selfId + " 成功写入Raft状态: term=" + currentTerm + ", votedFor=" + votedFor);
-           }catch(Exception e){
-               System.err.println("Node " + selfId + " 写入Raft状态失败: " + e.getMessage());
-               e.printStackTrace();
-           }
-        });
+    /**
+     * 获取投票对象
+     */
+    public int getVotedFor() {
+        return votedFor;
     }
-    
+
+    /**
+     * 获取日志大小
+     */
+    public int getLogSize() {
+        return log.size();
+    }
+
     /**
      * 获取最后一条日志的索引
      */
     public int getLastLogIndex() {
         return log.size() - 1; // 日志索引从0开始，但第0个是dummy entry
     }
-    
+
     /**
      * 获取最后一条日志的任期
      */
     public int getLastLogTerm() {
         return log.isEmpty() ? 0 : log.get(log.size() - 1).getLogTerm();
     }
-    
+
     /**
      * 获取指定索引的日志条目
      */
@@ -1099,64 +721,11 @@ public class Raft {
         }
         return log.get(index - 1);
     }
-    
+
     /**
      * 检查是否为Leader
      */
     public boolean isLeader() {
         return state == RoleState.LEADER;
-    }
-
-    /**
-     * 获取lastApplied（用于测试）
-     */
-    public int getLastApplied() {
-        return lastApplied;
-    }
-    
-    /**
-     * 获取commitIndex（用于测试）
-     */
-    public int getCommitIndex() {
-        return commitIndex;
-    }
-
-    public void setLog(List<LogEntry> result) {
-            this.log.clear();
-            this.log.addAll(result);
-            System.out.println("Node " + selfId + " 已加载日志，日志大小: " + log.size());
-    }
-
-    
-    /**
-     * 关闭 Raft 实例，清理资源
-     */
-    public void shutdown() {
-        System.out.println("Node " + selfId + " 开始关闭...");
-        
-        // 停止 applier 线程
-        stopApplier();
-        
-        // 最后一次持久化
-        if (raftLogManager != null || raftStateFileName != null) {
-            persist();
-            // 等待持久化完成
-            try {
-                Thread.sleep(100);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-        }
-        
-        // 关闭 RaftLogManager
-        if (raftLogManager != null) {
-            try {
-                raftLogManager.close();
-            } catch (Exception e) {
-                System.err.println("Node " + selfId + " 关闭 RaftLogManager 失败: " + e.getMessage());
-            }
-        }
-        
-        System.out.println("Node " + selfId + " 已关闭");
     }
 }
