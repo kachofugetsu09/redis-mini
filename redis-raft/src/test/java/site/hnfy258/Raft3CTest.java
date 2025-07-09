@@ -61,8 +61,13 @@ public class Raft3CTest {
         disconnectedNodes = new HashSet<>();
         executor = Executors.newCachedThreadPool();
         
-        // 清理之前的持久化文件
-        cleanupPersistenceFiles();
+        // 激进清理持久化文件，确保测试隔离
+        TestPersistenceUtils.aggressiveCleanup();
+        
+        // 验证清理状态
+        if (!TestPersistenceUtils.verifyCleanState()) {
+            System.err.println("Warning: Persistence state not completely clean before test");
+        }
     }
     
     @AfterEach
@@ -93,8 +98,13 @@ public class Raft3CTest {
             Thread.currentThread().interrupt();
         }
         
-        // 清理持久化文件
-        cleanupPersistenceFiles();
+        // 激进清理持久化文件，确保测试隔离
+        TestPersistenceUtils.aggressiveCleanup();
+        
+        // 最终验证清理状态
+        if (!TestPersistenceUtils.verifyCleanState()) {
+            System.err.println("Warning: Persistence state not completely clean after test");
+        }
     }
     
     /**
@@ -107,6 +117,9 @@ public class Raft3CTest {
     void testBasicPersistence() throws InterruptedException {
         System.out.println("=== Test (3C): basic persistence ===");
         
+        // 确保测试开始时的清洁状态
+        TestPersistenceUtils.aggressiveCleanup();
+        
         setupCluster(SMALL_CLUSTER_SIZE);
         
         // 1. 提交命令11到所有节点
@@ -118,6 +131,20 @@ public class Raft3CTest {
         System.out.println("Shutting down all nodes...");
         shutdownAllNodes();
         Thread.sleep(PERSISTENCE_WAIT_TIME);
+        
+        // 验证持久化文件已创建
+        System.out.println("Verifying persistence files exist...");
+        boolean hasPersistedFiles = false;
+        for (int nodeId : nodeIds) {
+            File nodeFile = new File("node-" + nodeId);
+            if (nodeFile.exists()) {
+                hasPersistedFiles = true;
+                System.out.println("✓ Found persistence file for node " + nodeId);
+            }
+        }
+        if (!hasPersistedFiles) {
+            System.err.println("Warning: No persistence files found after shutdown");
+        }
         
         System.out.println("Restarting all nodes...");
         restartAllNodes();
@@ -333,6 +360,9 @@ public class Raft3CTest {
     void testFigure8() throws InterruptedException {
         System.out.println("=== Test (3C): Figure 8 ===");
         
+        // 确保测试开始时的清洁状态，特别重要对于复杂测试
+        TestPersistenceUtils.aggressiveCleanup();
+        
         setupCluster(LARGE_CLUSTER_SIZE);
         
         // 提交初始命令
@@ -403,7 +433,23 @@ public class Raft3CTest {
         // 重启所有节点
         System.out.println("Restarting all nodes for final consistency check");
         restartAllShutdownNodes();
-        Thread.sleep(5 * ELECTION_TIMEOUT); // 给足够时间让所有节点稳定
+        
+        // 中间清理检查：确保重启过程中的持久化文件正确
+        System.out.println("Verifying persistence files after restart...");
+        Thread.sleep(2 * ELECTION_TIMEOUT); // 给时间让持久化文件被正确加载
+        
+        // 验证是否有持久化状态
+        boolean hasPersistence = false;
+        for (int nodeId : nodeIds) {
+            File nodeFile = new File("node-" + nodeId);
+            if (nodeFile.exists()) {
+                hasPersistence = true;
+                break;
+            }
+        }
+        System.out.println("Persistence state exists: " + hasPersistence);
+        
+        Thread.sleep(3 * ELECTION_TIMEOUT); // 给足够时间让所有节点稳定
         
         // 提交最终命令验证一致性
         System.out.println("Submitting final command to verify consistency");

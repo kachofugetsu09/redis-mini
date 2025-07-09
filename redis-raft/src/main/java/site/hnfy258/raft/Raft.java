@@ -19,7 +19,9 @@ import site.hnfy258.rpc.*;
 
 import java.io.*;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -43,8 +45,8 @@ public class Raft {
     private int lastApplied; // 最后应用到状态机的日志条目索引
 
     // 领导者上的易失性状态
-    private final int[] nextIndex; // 每个从节点下一个应当被传递的条目
-    private final int[] matchIndex; // 每个从节点已复制的最高日志条目索引
+    private final Map<Integer, Integer> nextIndex; // 每个从节点下一个应当被传递的条目
+    private final Map<Integer, Integer> matchIndex; // 每个从节点已复制的最高日志条目索引
 
     // 选举超时相关
     private long lastHeartbeatTime;
@@ -83,12 +85,13 @@ public class Raft {
         this.state = RoleState.FOLLOWER;
         this.commitIndex = 0;
         this.lastApplied = 0;
-        this.nextIndex = new int[peerIds.length];
-        this.matchIndex = new int[peerIds.length];
+        this.nextIndex = new HashMap<>();
+        this.matchIndex = new HashMap<>();
 
-        for(int i=0; i < peerIds.length; i++){
-            nextIndex[i] = 1;
-            matchIndex[i] = 0;
+        // 初始化所有节点的nextIndex和matchIndex
+        for (int peerId : peerIds) {
+            nextIndex.put(peerId, 1);
+            matchIndex.put(peerId, 0);
         }
         this.lastHeartbeatTime = System.currentTimeMillis();
         this.electionTimeout = generateElectionTimeout();
@@ -264,20 +267,14 @@ public class Raft {
     public void becomeLeader(){
         state = RoleState.LEADER;
 
-        for(int i = 0; i < peerIds.size(); i++){
-            if (i < nextIndex.length) {
-                nextIndex[i] = log.size(); // 初始化为当前日志长度（下一个要发送的索引）
-            }
-            if (i < matchIndex.length) {
-                matchIndex[i] = 0; // 初始化每个从节点的匹配索引为0
-            }
+        // 重新初始化所有节点的nextIndex和matchIndex
+        for (int peerId : peerIds) {
+            nextIndex.put(peerId, log.size()); // 初始化为当前日志长度（下一个要发送的索引）
+            matchIndex.put(peerId, 0); // 初始化每个从节点的匹配索引为0
         }
 
-        // 找到自己在peerIds中的索引
-        int selfIndex = peerIds.indexOf(selfId);
-        if (selfIndex >= 0 && selfIndex < matchIndex.length) {
-            matchIndex[selfIndex] = getLastLogIndex(); // 自己的匹配索引为最后日志索引
-        }
+        // 设置自己的matchIndex为最后日志索引
+        matchIndex.put(selfId, getLastLogIndex());
 
         logger.info("Node " + selfId + " became LEADER for term " + currentTerm);
 
@@ -313,7 +310,7 @@ public class Raft {
             currentTerm = args.term;
             state = RoleState.FOLLOWER; // 转为跟随者状态
             votedFor = -1; // 重置投票状态
-            //todo 持久化
+            // 持久化
             persist();
         }
 
@@ -394,7 +391,7 @@ public class Raft {
                     log.add(args.entries.get(i));
                     logger.info("追加日志条目: " + args.entries.get(i));
                 }
-                //todo 持久化日志
+                // 持久化日志
                 persist();
             }
         }
@@ -404,7 +401,7 @@ public class Raft {
                 List<LogEntry> subList = new ArrayList<>(log.subList(0, args.prevLogIndex + 1));
                 log.clear();
                 log.addAll(subList);
-                //todo 持久化日志
+                //持久化日志
                 persist();
 
             }
@@ -450,11 +447,11 @@ public class Raft {
                     return;
                 }
 
-                int prevLogIndex = nextIndex[peerId] - 1; // 修复：prevLogIndex应该是nextIndex - 1
+                int prevLogIndex = nextIndex.get(peerId) - 1; // 修复：prevLogIndex应该是nextIndex - 1
                 List<LogEntry> entries;
 
-                if(nextIndex[peerId] <= getLastLogIndex()){
-                    int startArrayIndex = nextIndex[peerId];
+                if(nextIndex.get(peerId) <= getLastLogIndex()){
+                    int startArrayIndex = nextIndex.get(peerId);
                     if(startArrayIndex < log.size()) {
                         entries = new ArrayList<>(log.subList(startArrayIndex, log.size()));
                     }else{
@@ -489,23 +486,23 @@ public class Raft {
                                 state = RoleState.FOLLOWER;
                                 votedFor = -1;
                                 resetElectionTimeout();
-                                //todo 持久化
+                                //持久化
                                 persist();
                             }
                             else if(reply.success){
-                                nextIndex[peerId] = finalArgs.prevLogIndex + finalArgs.entries.size() +1;
-                                matchIndex[peerId] = finalArgs.prevLogIndex + finalArgs.entries.size();
+                                nextIndex.put(peerId, finalArgs.prevLogIndex + finalArgs.entries.size() + 1);
+                                matchIndex.put(peerId, finalArgs.prevLogIndex + finalArgs.entries.size());
 
                                 if(finalArgs.entries.size() >0){
-                                    logger.info("心跳中成功复制到节点 " + peerId + "，nextIndex: " + nextIndex[peerId] + ", matchIndex: " + matchIndex[peerId]);
+                                    logger.info("心跳中成功复制到节点 " + peerId + "，nextIndex: " + nextIndex.get(peerId) + ", matchIndex: " + matchIndex.get(peerId));
                                     updateCommitIndex(); //检查是否可以提交新的日志条目
                                 }
                             }
                             else{
                                 if(reply.term < currentTerm){
-                                    int oldNextIndex = nextIndex[peerId];
-                                    nextIndex[peerId] = optimizeNextIndex(peerId, reply);
-                                    logger.info("心跳中节点 " + peerId + " 返回失败，更新 nextIndex: " + oldNextIndex + " -> " + nextIndex[peerId]);
+                                    int oldNextIndex = nextIndex.get(peerId);
+                                    nextIndex.put(peerId, optimizeNextIndex(peerId, reply));
+                                    logger.info("心跳中节点 " + peerId + " 返回失败，更新 nextIndex: " + oldNextIndex + " -> " + nextIndex.get(peerId));
                                 }
                             }
                         }
@@ -527,7 +524,7 @@ public class Raft {
                 int count = 1; // 自己先投一票
 
                 for(int i : peerIds){
-                    if(i != selfId && matchIndex[i] >=n){
+                    if(i != selfId && matchIndex.get(i) >= n){
                         count++;
                     }
                 }
@@ -589,12 +586,12 @@ public class Raft {
         LogEntry newEntry = new LogEntry(log.size(), curTerm, command);
 
         log.add(newEntry);
-        //todo 持久化日志
+        // 持久化日志
         persist();
 
         if(state != RoleState.LEADER || currentTerm !=curTerm){
             log.removeLast();
-            //todo 持久化回滚
+            // 持久化回滚
             persist();
             logger.info("当前状态不是领导者或任期已变更，无法添加日志条目");
             result.setCurrentTerm(currentTerm);
@@ -636,11 +633,11 @@ public class Raft {
                 return; // 只有领导者可以进行日志复制
             }
 
-            int prevLogIndex = nextIndex[peerId]-1;
+            int prevLogIndex = nextIndex.get(peerId)-1;
             List<LogEntry> entries;
 
-            if(nextIndex[peerId] <= getLastLogIndex()){
-                int startArrayIndex = nextIndex[peerId];
+            if(nextIndex.get(peerId) <= getLastLogIndex()){
+                int startArrayIndex = nextIndex.get(peerId);
                 if(startArrayIndex <log.size()){
                     entries = new ArrayList<>(log.subList(startArrayIndex, log.size()));
                 }else{
@@ -667,9 +664,9 @@ public class Raft {
                         }
 
                         if(reply.success){
-                            nextIndex[peerId] = args.prevLogIndex+ args.entries.size() + 1;
-                            matchIndex[peerId] = args.prevLogIndex + args.entries.size();
-                            logger.info("节点 " + selfId + " 成功复制日志到节点 " + peerId + "，nextIndex: " + nextIndex[peerId] + ", matchIndex: " + matchIndex[peerId]);
+                            nextIndex.put(peerId, args.prevLogIndex + args.entries.size() + 1);
+                            matchIndex.put(peerId, args.prevLogIndex + args.entries.size());
+                            logger.info("节点 " + selfId + " 成功复制日志到节点 " + peerId + "，nextIndex: " + nextIndex.get(peerId) + ", matchIndex: " + matchIndex.get(peerId));
                             updateCommitIndex();
                         }
                         else{
@@ -681,9 +678,9 @@ public class Raft {
                                 resetElectionTimeout();
                             }
                             else{
-                                int oldNextIndex = nextIndex[peerId];
-                                nextIndex[peerId] = optimizeNextIndex(peerId, reply);
-                                logger.info("节点 " + selfId + " 复制日志到节点 " + peerId + " 失败，更新 nextIndex: " + oldNextIndex + " -> " + nextIndex[peerId]);
+                                int oldNextIndex = nextIndex.get(peerId);
+                                nextIndex.put(peerId, optimizeNextIndex(peerId, reply));
+                                logger.info("节点 " + selfId + " 复制日志到节点 " + peerId + " 失败，更新 nextIndex: " + oldNextIndex + " -> " + nextIndex.get(peerId));
                             }
                         }
                     }
@@ -750,14 +747,11 @@ public class Raft {
 
             // 根据恢复的日志，更新 nextIndex 和 matchIndex
             // 这一步通常在成为 Leader 后才会完全初始化，但在 Follower 启动时也需要确保基本一致
-            for (int i = 0; i < peerIds.size(); i++) {
-                nextIndex[i] = log.size();
-                matchIndex[i] = 0; // Follower 启动时 matchIndex 默认为 0
+            for (int peerId : peerIds) {
+                nextIndex.put(peerId, log.size());
+                matchIndex.put(peerId, 0); // Follower 启动时 matchIndex 默认为 0
             }
-            int selfIndex = peerIds.indexOf(selfId);
-            if (selfIndex >= 0 && selfIndex < matchIndex.length) {
-                matchIndex[selfIndex] = getLastLogIndex();
-            }
+            matchIndex.put(selfId, getLastLogIndex());
 
             logger.info("Raft状态和日志加载成功。当前任期: " + currentTerm + ", 投票给: " + votedFor + ", 日志条目数量: " + log.size());
 

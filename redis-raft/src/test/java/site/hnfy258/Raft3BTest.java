@@ -43,12 +43,20 @@ public class Raft3BTest {
     
     @BeforeEach
     void setUp() {
+        // 激进清理持久化文件，确保测试隔离
+        TestPersistenceUtils.aggressiveCleanup();
+        
         nodes = new ArrayList<>();
         networks = new ArrayList<>();
         nodeIds = new ArrayList<>();
         ports = new ArrayList<>();
         disconnectedNodes = new HashSet<>();
         executor = Executors.newCachedThreadPool();
+        
+        // 验证清理状态
+        if (!TestPersistenceUtils.verifyCleanState()) {
+            System.err.println("Warning: Persistence state not completely clean before test");
+        }
     }
     
     @AfterEach
@@ -76,6 +84,14 @@ public class Raft3BTest {
             Thread.sleep(500);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+        }
+        
+        // 激进清理持久化文件，确保测试隔离
+        TestPersistenceUtils.aggressiveCleanup();
+        
+        // 最终验证清理状态
+        if (!TestPersistenceUtils.verifyCleanState()) {
+            System.err.println("Warning: Persistence state not completely clean after test");
         }
     }
     

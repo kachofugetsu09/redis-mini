@@ -2,13 +2,16 @@
 
 ## 项目概览
 
-Redis Mini 是一个用Java实现的Redis服务器，它忠实地复刻了Redis的核心功能和特性。是一个实现了五大基础数据结构，aof，rdb持久化，主从同步功能的Java版本redis服务端。
+Redis Mini 是一个用Java实现的Redis服务器，它忠实地复刻了Redis的核心功能和特性。是一个实现了五大基础数据结构，AOF/RDB持久化，主从同步，以及基于Raft算法的分布式一致性功能的Java版本Redis服务端。
+
+项目不仅实现了传统的Redis单机功能，还通过集成Raft分布式共识算法，为Redis Mini提供了企业级的分布式一致性能力，能够在复杂的分布式环境中提供可靠、高性能的服务。
 
 ### 核心特性
 
 * **完整的Redis命令支持**: 实现了Redis的主要命令，包括String、List、Hash、Set和Sorted Set等数据类型的操作。
 * **持久化机制**: 支持RDB快照和AOF日志两种持久化方式，确保数据安全性。
 * **主从复制**: 实现了Redis的主从复制协议，支持全量同步和增量同步。
+* **分布式一致性**: 基于Raft算法实现分布式共识，提供强一致性保证和自动故障转移。
 * **高性能网络框架**: 基于Netty构建，支持高并发连接和请求处理。
 * **模块化设计**: 项目被清晰地分为多个功能模块，每个模块都有其明确的职责和边界。
 
@@ -21,6 +24,7 @@ Redis Mini 采用模块化架构，每个模块都专注于特定的功能领域
 * [**redis-persistence**](redis-persistence/redis-persistence.md): 负责RDB和AOF两种持久化机制。
 * [**redis-protocal**](redis-protocal/redis-protocal.md): 实现RESP（Redis序列化协议）的编解码。
 * [**redis-replication**](redis-replication/redis-replication.md): 提供主从复制功能。
+* [**redis-raft**](redis-raft/redis-raft.md): 实现Raft分布式一致性算法，提供强一致性保证。
 * [**redis-server**](redis-server/redis-server.md): 整合所有模块，提供完整的服务器实现。
 
 ## 快速开始
@@ -94,6 +98,12 @@ OK
   * 全量同步和增量同步
   * 复制积压缓冲区管理
 
+* [**redis-raft**](redis-raft/redis-raft.md): 分布式一致性模块
+  * Raft算法完整实现
+  * 领导者选举和日志复制
+  * 持久化状态管理和故障恢复
+  * 高性能网络通信和优化
+
 * [**redis-server**](redis-server/redis-server.md): 服务器模块
   * 网络服务实现
   * 命令处理和执行
@@ -135,6 +145,7 @@ OK
 ## 开发计划
 - [ ] 重构和优化replication模块，具体存在的问题可以参考replication模块的文档
 - [x] 升级到Java21，利用ZGC带来的性能提升解决benchmark中长尾延迟过长的问题
+- [x] 支持Raft分布式一致性算法，支持领导者选举、日志复制和持久化
 - [ ] 添加Redis Sentinel支持
 - [ ] 实现Redis Cluster集群功能
 - [ ] 实现更多的Redis命令
