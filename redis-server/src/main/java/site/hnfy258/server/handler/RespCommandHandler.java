@@ -15,6 +15,7 @@ import site.hnfy258.protocal.BulkString;
 import site.hnfy258.protocal.Errors;
 import site.hnfy258.protocal.Resp;
 import site.hnfy258.protocal.RespArray;
+import site.hnfy258.raft.Raft;
 import site.hnfy258.server.context.RedisContext;
 
 /**
@@ -68,6 +69,9 @@ public class RespCommandHandler extends SimpleChannelInboundHandler<Resp> {
     /** 当前节点是否为主节点 */
     private final boolean isMaster;
 
+    /** 是否启用Raft协议 */
+    private final boolean isRaftEnabled;
+
     /**
      * 创建命令处理器实例。
      * 
@@ -87,6 +91,7 @@ public class RespCommandHandler extends SimpleChannelInboundHandler<Resp> {
         }
         this.redisContext = redisContext;
         this.isMaster = redisContext.isMaster();
+        this.isRaftEnabled = redisContext.isRaftEnabled();
         
         log.info("RespCommandHandler初始化完成 - 模式: {}", 
                 isMaster ? "主节点" : "从节点");
@@ -249,6 +254,7 @@ public class RespCommandHandler extends SimpleChannelInboundHandler<Resp> {
      * 
      * <p>处理流程：
      * <ul>
+     *   <li>检查Raft模式下是否为Leader
      *   <li>检查是否需要AOF持久化
      *   <li>检查是否需要主从复制
      *   <li>执行持久化操作
@@ -268,7 +274,31 @@ public class RespCommandHandler extends SimpleChannelInboundHandler<Resp> {
     private void handleWriteCommand(final RespArray respArray, final CommandType commandType) {
         final boolean needAof = redisContext.isAofEnabled();
         final boolean needReplication = redisContext.isMaster();
+        final boolean isRaftEnabled = redisContext.isRaftEnabled();
         
+        // 如果启用了Raft，只有Leader才能处理写命令
+        if (isRaftEnabled) {
+            Raft raft = redisContext.getRaft();
+            if (raft != null && !raft.isLeader()) {
+                log.debug("[Raft] 非Leader节点，跳过写命令处理: {}", commandType);
+                return;
+            }
+            
+            // 提交写命令到Raft日志
+            if (raft != null) {
+                try {
+                    raft.start(respArray);
+                    log.debug("[Raft] 命令已提交到Raft日志: {}", commandType);
+                } catch (Exception e) {
+                    log.error("[Raft] 命令提交失败，命令: {}, 错误: {}", commandType, e.getMessage(), e);
+                }
+            }
+            
+            // 在Raft模式下，持久化和复制由Raft负责
+            return;
+        }
+        
+        // 非Raft模式下的传统处理
         if (!needAof && !needReplication) {
             return;
         }
