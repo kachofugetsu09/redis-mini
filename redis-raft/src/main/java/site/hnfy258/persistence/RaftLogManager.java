@@ -31,6 +31,8 @@ public class RaftLogManager {
             writer.flush();
         } catch (Exception e) {
             throw new RuntimeException("Failed to write log entry", e);
+        } finally {
+            serialize.release(); // 确保释放ByteBuf
         }
     }
 

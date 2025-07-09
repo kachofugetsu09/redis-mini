@@ -91,7 +91,7 @@ public class Raft {
         this.currentTerm = 0;
         this.votedFor = -1;
         this.log = new ArrayList<>();
-        log.add(new LogEntry(-1,-1,null));
+        log.add(new LogEntry(0, 0, null)); // 虚拟哨兵条目，索引0，任期0
         this.state = RoleState.FOLLOWER;
         this.commitIndex = 0;
         this.lastApplied = 0;
@@ -213,6 +213,27 @@ public class Raft {
         if (raftLogManager != null) {
             try {
                 raftLogManager.load();
+                
+                // 重要：加载日志后，需要恢复状态
+                if (log.size() > 1) { // 除了哨兵条目
+                    int lastLogIndex = getLastLogIndex();
+                    
+                    // 保守的恢复策略：只恢复到已知安全的状态
+                    // 不假设所有日志都已提交，而是等待Leader的心跳来确定commitIndex
+                    commitIndex = 0; // 重置为0，等待Leader更新
+                    lastApplied = 0; // 重置为0，等待重新应用
+                    
+                    System.out.println("Node " + selfId + " 成功加载日志，日志大小: " + log.size() + ", lastLogIndex: " + lastLogIndex);
+                    System.out.println("Node " + selfId + " 重置 commitIndex=0, lastApplied=0，等待Leader同步");
+                    
+                    // 如果是Leader，需要重新评估commitIndex
+                    if (state == RoleState.LEADER) {
+                        // Leader重启后，保守地重新评估commitIndex
+                        updateCommitIndex();
+                    }
+                    
+    
+                }
 
             } catch (Exception e) {
                 System.err.println("Node " + selfId + " 加载日志失败: " + e.getMessage());
@@ -248,8 +269,8 @@ public class Raft {
 
             arg.candidateId = selfId;
             arg.term = currentTerm;
-            arg.lastLogIndex = log.size() - 1;
-            arg.lastLogTerm = log.get(log.size() - 1).getLogTerm();
+            arg.lastLogIndex = getLastLogIndex();
+            arg.lastLogTerm = getLastLogTerm();
         }
         // 异步发送投票请求并统计结果
         List<CompletableFuture<Boolean>> futures = new ArrayList<>();
@@ -467,7 +488,6 @@ public class Raft {
             }
             reply.xLen = log.size();
 
-            System.out.println(STR."失败: prevLogTerm \{args.prevLogTerm} 与日志条目不匹配，当前日志长度为 \{log.size()}");
             return reply;
         }
 
@@ -570,18 +590,22 @@ public class Raft {
                     return;
                 }
 
-                int prevLogIndex = nextIndex[peerId] - 1; // 修复：prevLogIndex应该是nextIndex - 1
+                int prevLogIndex = nextIndex[peerId] - 1;
                 List<LogEntry> entries;
 
                 if(nextIndex[peerId] <= getLastLogIndex()){
-                    int startArrayIndex = nextIndex[peerId];
+                    // 需要复制从nextIndex[peerId]开始的日志条目
+                    // 转换为数组索引：日志索引从1开始，数组索引从0开始
+                    int startArrayIndex = nextIndex[peerId] - 1;
+                    if(startArrayIndex < 0) {
+                        startArrayIndex = 0;
+                    }
                     if(startArrayIndex < log.size()) {
                         entries = new ArrayList<>(log.subList(startArrayIndex, log.size()));
-                    }else{
+                    } else {
                         entries = new ArrayList<>();
                     }
-                }
-                else{
+                } else {
                     entries = new ArrayList<>();
                 }
 
@@ -589,7 +613,20 @@ public class Raft {
                 args.term = currentTerm;
                 args.leaderId = selfId;
                 args.prevLogIndex = prevLogIndex;
-                args.prevLogTerm = log.get(prevLogIndex).getLogTerm();
+                
+                // 获取prevLogIndex位置的日志条目任期
+                if (prevLogIndex == 0) {
+                    args.prevLogTerm = 0; // 索引0是虚拟条目，任期为0
+                } else {
+                    int prevArrayIndex = prevLogIndex - 1;
+                    if (prevArrayIndex < 0 || prevArrayIndex >= log.size()) {
+                        System.err.println("Node " + selfId + " prevLogIndex越界: " + prevLogIndex + ", 数组索引: " + prevArrayIndex + ", log.size(): " + log.size());
+                        args.prevLogTerm = 0;
+                    } else {
+                        args.prevLogTerm = log.get(prevArrayIndex).getLogTerm();
+                    }
+                }
+                
                 args.entries = entries;
                 args.leaderCommit = commitIndex;
             }
@@ -794,6 +831,27 @@ public class Raft {
     }
 
     /**
+     * 设置状态机
+     */
+    public void setStateMachine(RedisCore redisCore) {
+        this.redisCore = redisCore;
+        
+        // 重新初始化RaftLogManager
+        if (this.raftLogManager == null && this.redisCore != null) {
+            try {
+                this.raftLogManager = new RaftLogManager(raftLogFileName, redisCore, this);
+            } catch (Exception e) {
+                System.err.println("初始化 RaftLogManager 失败: " + e.getMessage());
+            }
+        }
+        
+        // 启动applier线程
+        if (this.redisCore != null && (applierThread == null || !applierThread.isAlive())) {
+            startApplier();
+        }
+    }
+
+    /**
      * applier主循环
      */
     private void applierLoop() {
@@ -846,17 +904,26 @@ public class Raft {
             // 收集需要应用的日志条目
             while (lastApplied < commitIndex) {
                 lastApplied++;
-                int applyIndex = lastApplied;
                 
-                if (applyIndex >= log.size()) {
-                    System.err.println("Node " + selfId + " 日志索引越界，lastApplied: " + lastApplied + ", log.size(): " + log.size());
+                // 检查日志索引是否有效
+                if (lastApplied <= 0) {
+                    System.err.println("Node " + selfId + " 无效的lastApplied: " + lastApplied);
                     lastApplied--; // 回滚
                     break;
                 }
                 
-                LogEntry entry = log.get(applyIndex);
+                // 日志索引从1开始，数组索引从0开始，需要减1
+                int arrayIndex = lastApplied - 1;
+                if (arrayIndex >= log.size()) {
+                    System.err.println("Node " + selfId + " 日志索引越界，lastApplied: " + lastApplied + ", arrayIndex: " + arrayIndex + ", log.size(): " + log.size());
+                    lastApplied--; // 回滚
+                    break;
+                }
+                
+                LogEntry entry = log.get(arrayIndex);
                 if (entry.getCommand() != null) {
                     toApply.add(entry);
+                    System.out.println("Node " + selfId + " 准备应用日志条目: " + entry.getLogIndex() + ", 数组索引: " + arrayIndex);
                 }
             }
         }
@@ -1080,7 +1147,8 @@ public class Raft {
      * 获取最后一条日志的索引
      */
     public int getLastLogIndex() {
-        return log.size() - 1; // 日志索引从0开始，但第0个是dummy entry
+        // 日志索引从1开始，数组为空时最后索引是0
+        return log.size(); // log.size()恰好是最后一条日志的索引
     }
     
     /**

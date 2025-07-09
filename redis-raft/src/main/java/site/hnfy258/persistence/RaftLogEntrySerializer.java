@@ -16,30 +16,34 @@ public class RaftLogEntrySerializer {
     //*格式: | LogIndex (4 bytes) | LogTerm (4 bytes) | Command Length (4 bytes) | Command (RespArray encoded bytes) |
     public static ByteBuf serialize(LogEntry entry){
         ByteBuf buf = PooledByteBufAllocator.DEFAULT.buffer();
+        
+        buf.writeInt(entry.getLogIndex());
+        buf.writeInt(entry.getLogTerm());
+
+        ByteBuf cmdBuf = null;
         try{
-
-            buf.writeInt(entry.getLogIndex());
-            buf.writeInt(entry.getLogTerm());
-
-            ByteBuf cmdBuf = PooledByteBufAllocator.DEFAULT.buffer();
-            try{
-                if(entry.getCommand() != null){
-                    entry.getCommand().encode(entry.getCommand(),cmdBuf);
-                }
-
+            if(entry.getCommand() != null){
+                cmdBuf = PooledByteBufAllocator.DEFAULT.buffer();
+                entry.getCommand().encode(entry.getCommand(), cmdBuf);
+                
                 int cmdLength = cmdBuf.readableBytes();
                 buf.writeInt(cmdLength);
 
-                if(cmdLength >0){
-                    cmdBuf.writeBytes(cmdBuf);
+                if(cmdLength > 0){
+                    buf.writeBytes(cmdBuf); // 写入命令数据到主缓冲区
                 }
-
-                return buf;
-            }finally {
-                cmdBuf.release();
+            } else {
+                buf.writeInt(0); // 命令长度为0
             }
-        }finally {
-            buf.release();
+
+            return buf;
+        } catch (Exception e) {
+            buf.release(); // 发生异常时释放主缓冲区
+            throw new RuntimeException("Failed to serialize LogEntry", e);
+        } finally {
+            if (cmdBuf != null) {
+                cmdBuf.release(); // 释放临时命令缓冲区
+            }
         }
     }
 

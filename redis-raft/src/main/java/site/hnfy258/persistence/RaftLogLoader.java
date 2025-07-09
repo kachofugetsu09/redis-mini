@@ -45,6 +45,7 @@ public class RaftLogLoader {
 
     public List<LogEntry> load() {
         List<LogEntry> loadedEntries = new ArrayList<>();
+        loadedEntries.add(new LogEntry(-1,-1,null));
         if (channel == null) {
             log.warn("无法加载 RaftLogEntry，FileChannel 未初始化或已关闭。");
             return loadedEntries;

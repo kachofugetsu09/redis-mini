@@ -143,7 +143,9 @@ public class CommandExecutorImpl implements CommandExecutor {
             // 3. 创建并执行命令
             final Command cmd = commandType.createCommand(redisContext);
             cmd.setContext(respArray.getContent());
+            log.info("执行命令: {} {}", commandName, String.join(" ", args));
             cmd.handle();
+            log.info("命令执行成功: {} {}", commandName, String.join(" ", args));
             
             return true;
         } catch (Exception e) {

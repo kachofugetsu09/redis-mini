@@ -272,6 +272,91 @@ public class RedisServerConfig {
      */
     @Builder.Default
     private int replicationBufferSize = 1024 * 1024; // 1MB
+
+    // ========== Raft配置 ==========
+    
+    /**
+     * 是否启用Raft协议。
+     * 
+     * <p>功能说明：
+     * <ul>
+     *   <li>启用分布式一致性协议
+     *   <li>支持集群模式
+     *   <li>自动故障转移
+     *   <li>强一致性保证
+     * </ul>
+     */
+    @Builder.Default
+    private boolean raftEnabled = false;
+    
+    /**
+     * Raft节点ID。
+     * 
+     * <p>配置说明：
+     * <ul>
+     *   <li>集群内唯一标识
+     *   <li>建议使用有意义的名称
+     *   <li>不可在运行时修改
+     *   <li>用于日志和监控
+     * </ul>
+     */
+    private String raftNodeId;
+    
+    /**
+     * Raft监听端口。
+     * 
+     * <p>配置说明：
+     * <ul>
+     *   <li>用于节点间通信
+     *   <li>与Redis端口分离
+     *   <li>确保端口可用
+     *   <li>防火墙需要开放
+     * </ul>
+     */
+    @Builder.Default
+    private int raftPort = 8080;
+    
+    /**
+     * Raft数据目录。
+     * 
+     * <p>配置说明：
+     * <ul>
+     *   <li>存储Raft日志和状态
+     *   <li>确保目录可写
+     *   <li>考虑磁盘空间
+     *   <li>定期备份重要数据
+     * </ul>
+     */
+    @Builder.Default
+    private String raftDataDir = "raft-data";
+    
+    /**
+     * Raft选举超时时间（毫秒）。
+     * 
+     * <p>配置说明：
+     * <ul>
+     *   <li>影响选举速度
+     *   <li>考虑网络延迟
+     *   <li>权衡稳定性
+     *   <li>生产环境建议5-10秒
+     * </ul>
+     */
+    @Builder.Default
+    private int raftElectionTimeout = 5000;
+    
+    /**
+     * Raft心跳间隔（毫秒）。
+     * 
+     * <p>配置说明：
+     * <ul>
+     *   <li>Leader发送心跳频率
+     *   <li>建议为选举超时的1/10
+     *   <li>影响故障检测速度
+     *   <li>过小会增加网络负载
+     * </ul>
+     */
+    @Builder.Default
+    private int raftHeartbeatInterval = 1000;
     
     // ========== 工厂方法 ==========
     
@@ -347,6 +432,41 @@ public class RedisServerConfig {
     }
     
     /**
+     * 创建Raft集群配置。
+     * 
+     * <p>特点：
+     * <ul>
+     *   <li>启用Raft协议
+     *   <li>优化的网络配置
+     *   <li>持久化支持
+     *   <li>适合集群部署
+     * </ul>
+     * 
+     * @param nodeId 节点ID
+     * @param redisPort Redis端口
+     * @param raftPort Raft端口
+     * @return Raft集群配置实例
+     */
+    public static RedisServerConfig raftClusterConfig(String nodeId, int redisPort, int raftPort) {
+        return RedisServerConfig.builder()
+                .host("127.0.0.1")
+                .port(redisPort)
+                .raftEnabled(true)
+                .raftNodeId(nodeId)
+                .raftPort(raftPort)
+                .raftDataDir("data/" + nodeId)
+                .databaseCount(16)
+                .backlogSize(1024)
+                .receiveBufferSize(32 * 1024)
+                .sendBufferSize(32 * 1024)
+                .bossThreadCount(1)
+                .workerThreadCount(Runtime.getRuntime().availableProcessors())
+                .commandExecutorThreadCount(1)
+                .replicationEnabled(false)  // 在Raft模式下禁用传统主从复制
+                .build();
+    }
+    
+    /**
      * 验证配置参数的合法性
      * 
      * @throws IllegalArgumentException 如果配置参数无效
@@ -376,4 +496,6 @@ public class RedisServerConfig {
             throw new IllegalArgumentException("启用RDB时必须指定RDB文件名");
         }
     }
+
+
 }

@@ -6,6 +6,7 @@ import site.hnfy258.core.RedisCore;
 import site.hnfy258.database.RedisDB;
 import site.hnfy258.datastructure.RedisBytes;
 import site.hnfy258.datastructure.RedisData;
+import site.hnfy258.raft.Raft;
 import site.hnfy258.rdb.RdbManager;
 
 import java.util.concurrent.CompletableFuture;
@@ -465,4 +466,8 @@ public interface RedisContext {
      * @return Redis核心实现实例
      */
     RedisCore getRedisCore();
+
+    Raft getRaft();
+
+    boolean isRaftEnabled();
 }

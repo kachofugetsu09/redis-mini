@@ -8,6 +8,7 @@ import site.hnfy258.core.RedisCoreImpl;
 import site.hnfy258.database.RedisDB;
 import site.hnfy258.datastructure.RedisBytes;
 import site.hnfy258.datastructure.RedisData;
+import site.hnfy258.raft.Raft;
 import site.hnfy258.rdb.RdbManager;
 import site.hnfy258.server.command.executor.CommandExecutorImpl;
 import site.hnfy258.server.config.RedisServerConfig;
@@ -45,6 +46,10 @@ public class RedisContextImpl implements RedisContext {
     
     // ========== 系统状态 ==========
     private final AtomicBoolean running = new AtomicBoolean(false);
+
+
+    // ==========raft组件============
+    Raft raft;
     
     /**
      * 新的构造函数，接收RedisServerConfig
@@ -123,6 +128,17 @@ public class RedisContextImpl implements RedisContext {
         this.redisNode = redisNode;
         log.info("RedisContext关联节点: {}", 
                 redisNode != null ? redisNode.getNodeId() : "null");
+    }
+    
+    /**
+     * 设置Raft实例
+     * 
+     * @param raft Raft实例
+     */
+    public void setRaft(Raft raft) {
+        this.raft = raft;
+        log.info("RedisContext关联Raft实例: {}", 
+                raft != null ? raft.getSelfId() : "null");
     }
       // ========== 数据操作实现 ==========
     
@@ -255,7 +271,17 @@ public class RedisContextImpl implements RedisContext {
         // 1. 直接返回底层RedisCore，避免反射
         return redisCore;
     }
-    
+
+    @Override
+    public Raft getRaft() {
+        return raft;
+    }
+
+    @Override
+    public boolean isRaftEnabled() {
+        return config.isRaftEnabled();
+    }
+
     @Override
     public void flushAof() {
         if (persistence.isAofEnabled()) {

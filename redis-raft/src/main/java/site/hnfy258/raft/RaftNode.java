@@ -1,6 +1,7 @@
 package site.hnfy258.raft;
 
 import site.hnfy258.core.RoleState;
+import site.hnfy258.core.RedisCore;
 import site.hnfy258.network.RaftNetwork;
 import site.hnfy258.raft.Raft;
 
@@ -36,6 +37,14 @@ public class RaftNode {
         this.serverId = serverId;
         this.network = network;
         this.raft = new Raft(serverId, peerIds, network);
+        this.raft.setNodeRef(this); // 设置反向引用
+        this.scheduler = Executors.newScheduledThreadPool(2);
+    }
+    
+    public RaftNode(int serverId, int[] peerIds, RaftNetwork network, RedisCore redisCore) {
+        this.serverId = serverId;
+        this.network = network;
+        this.raft = new Raft(serverId, peerIds, network, redisCore, null);
         this.raft.setNodeRef(this); // 设置反向引用
         this.scheduler = Executors.newScheduledThreadPool(2);
     }
