@@ -1,5 +1,7 @@
 package site.hnfy258.raft;
 
+import site.hnfy258.core.RedisCore;
+import site.hnfy258.core.RedisCore;
 import site.hnfy258.core.RoleState;
 import site.hnfy258.network.RaftNetwork;
 
@@ -32,9 +34,13 @@ public class RaftNode {
     private boolean started = false;
 
     public RaftNode(int serverId, int[] peerIds, RaftNetwork network) {
+        this(serverId, peerIds, network, null);
+    }
+    
+    public RaftNode(int serverId, int[] peerIds, RaftNetwork network, RedisCore redisCore) {
         this.serverId = serverId;
         this.network = network;
-        this.raft = new Raft(serverId, peerIds, network);
+        this.raft = new Raft(serverId, peerIds, network, redisCore);
         this.raft.setNodeRef(this); // 设置反向引用
         this.scheduler = Executors.newScheduledThreadPool(2);
     }
@@ -71,6 +77,11 @@ public class RaftNode {
         // 停止定时器
         stopElectionTimer();
         stopHeartbeatTimer();
+
+        // 重置Raft状态为FOLLOWER
+        synchronized (raft) {
+            raft.setState(RoleState.FOLLOWER);
+        }
 
         scheduler.shutdown();
         try {
@@ -215,6 +226,13 @@ public class RaftNode {
     public void onBecomeFollower() {
         stopHeartbeatTimer();
         startElectionTimer();
+    }
+
+    /**
+     * 检查节点是否已启动
+     */
+    public boolean isStarted() {
+        return started;
     }
 }
 
